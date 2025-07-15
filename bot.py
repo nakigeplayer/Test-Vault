@@ -45,8 +45,15 @@ def user_vault(user_id):
     if not os.path.exists(user_path):
         abort(404)
     files = os.listdir(user_path)
-    links = [f"<li><a href='/vault/{user_id}/{f}'>{f}</a></li>" for f in files]
-    return render_template_string(f"<h2>Archivos de usuario {user_id}:</h2><ul>" + "".join(links) + "</ul>")
+    items = []
+    for f in files:
+        file_path = os.path.join(user_path, f)
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        items.append(f"<li>{f} - {round(size_mb, 2)} MB "
+                     f"<a href='/vault/{user_id}/{f}'>[Descargar]</a> "
+                     f"<a href='/delete/{user_id}/{f}'>🗑️ Eliminar</a></li>")
+    return render_template_string(f"<h2>Archivos de usuario {user_id}:</h2><ul>" + "".join(items) + "</ul>")
+
 
 @web_app.route("/vault/<user_id>/<filename>")
 def serve_file(user_id, filename):
@@ -179,6 +186,31 @@ async def clear_user_files(client: Client, message: Message):
 
     total_storage_usage = max(0.0, total_storage_usage - freed)
     await message.reply(f"🧹 Archivos eliminados. Espacio liberado: {round(freed, 2)} MB")
+
+@web_app.route("/delete/<user_id>/<filename>")
+def delete_file(user_id, filename):
+    file_path = os.path.join(VAULT_FOLDER, user_id, filename)
+    file_id = None
+    for fid, (fname, uid, _) in active_files.items():
+        if fname == filename and uid == user_id:
+            file_id = fid
+            break
+
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+    if file_id:
+        _, _, size_mb = active_files.pop(file_id, (None, None, 0.0))
+        total_storage_usage = max(0.0, total_storage_usage - size_mb)
+
+    # Notificar al bot
+    try:
+        msg = f"Archivo '{filename}' de usuario {user_id} eliminado manualmente."
+        asyncio.create_task(bot_app.send_message(chat_id=int(user_id), text=msg))
+    except Exception as e:
+        print("Error enviando notificación:", e)
+
+    return redirect(f"/vault/{user_id}/")
 
 # --- Ejecutar servicios ---
 if __name__ == "__main__":
