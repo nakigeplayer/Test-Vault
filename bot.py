@@ -6,7 +6,6 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 from dotenv import load_dotenv
 
-# --- Cargar configuración ---
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
@@ -18,14 +17,13 @@ RENDER_APP_NAME = os.getenv("RENDER_APP_NAME", "tu_app")
 PASSWORD = os.getenv("PASSWORD", "admin")
 BASE_URL = f"https://{RENDER_APP_NAME}.onrender.com"
 
-# --- Estado global ---
 total_storage_usage = 0.0
-active_files = {}  # file_id: (filename, user_id, file_size_mb)
-download_counter = 1
-download_map = {}  # code: (user_id, filename)
-authorized_ips = set()
+active_files = {}           # file_id: (filename, user_id, file_size_mb)
+download_counter = 1        # 000001 - 999999
+download_map = {}           # code: (user_id, filename)
+authorized_ips = set()      # IPs que ya pasaron login
 
-# --- Flask web server ---
+# --- Flask ---
 web_app = Flask(__name__)
 
 def human_size(path):
@@ -107,24 +105,17 @@ def delete_file(user_id, filename):
 def direct_download(code):
     entry = download_map.get(code)
     if not entry:
-        return "⚠️ Código de descarga inválido o expirado.", 404
-
+        return "⚠️ Código inválido o expirado.", 404
     user_id, filename = entry
     file_path = os.path.join(VAULT_FOLDER, user_id, filename)
     if not os.path.exists(file_path):
-        return "⚠️ Archivo no encontrado o ya expiró.", 404
-
-    return send_from_directory(
-        os.path.join(VAULT_FOLDER, user_id),
-        filename,
-        as_attachment=True,
-        download_name=filename
-    )
+        return "⚠️ Archivo no encontrado.", 404
+    return send_from_directory(os.path.join(VAULT_FOLDER, user_id), filename, as_attachment=True, download_name=filename)
 
 def run_flask():
     web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
-# --- Bot Telegram con Pyrogram ---
+# --- Pyrogram bot ---
 bot_app = Client("vault_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 def get_file_info(message: Message):
@@ -159,21 +150,17 @@ def get_file_info(message: Message):
 def next_download_code():
     global download_counter
     code = f"{download_counter:06d}"
-    download_counter += 1
-    if download_counter > 999999:
-        download_counter = 1
+    download_counter = 1 if download_counter >= 999999 else download_counter + 1
     return code
 
 @bot_app.on_message(filters.media)
 async def handle_media(client: Client, message: Message):
     global total_storage_usage
-
     user_id = str(message.from_user.id)
     filename, file_id, file_size_mb = get_file_info(message)
     if not filename:
         await message.reply("No pude identificar el archivo.")
         return
-
     if total_storage_usage + file_size_mb > STORAGE_LIMIT_MB:
         await message.reply("No puedo almacenar más archivos ahora")
         return
@@ -181,7 +168,6 @@ async def handle_media(client: Client, message: Message):
     file_path = os.path.join(VAULT_FOLDER, user_id, filename)
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     await client.download_media(message, file_path)
-
     total_storage_usage += file_size_mb
     active_files[file_id] = (filename, user_id, file_size_mb)
 
@@ -195,17 +181,49 @@ async def handle_media(client: Client, message: Message):
 
 async def remove_file_later(client: Client, message: Message, file_id: str, path: str, code: str):
     global total_storage_usage
-
     await asyncio.sleep(FILE_DURATION_MIN * 60)
     if not os.path.exists(path):
-        return  # Ya fue borrado manualmente
-
+        return
     try:
         os.remove(path)
     except:
         pass
-
     _, _, size_mb = active_files.pop(file_id, (None, None, 0.0))
     download_map.pop(code, None)
     total_storage_usage = max(0.0, total_storage_usage - size_mb)
     await message.reply("archivo borrado", quote=True)
+
+@bot_app.on_message(filters.command("clear"))
+async def clear_user_files(client: Client, message: Message):
+    global total_storage_usage
+
+    user_id = str(message.from_user.id)
+    user_path = os.path.join(VAULT_FOLDER, user_id)
+
+    if not os.path.exists(user_path):
+        await message.reply("No tienes archivos almacenados.")
+        return
+
+    freed = 0.0
+    for filename in os.listdir(user_path):
+        try:
+            path = os.path.join(user_path, filename)
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+            os.remove(path)
+            freed += size_mb
+        except:
+            continue
+
+    try:
+        os.rmdir(user_path)
+    except:
+        pass
+
+    # Eliminar códigos de descarga vinculados a este usuario
+    to_remove = [code for code, (uid, _) in download_map.items() if uid == user_id]
+    for code in to_remove:
+        download_map.pop(code)
+
+    total_storage_usage = max(0.0, total_storage_usage - freed)
+    await message.reply(f"🧹 Archivos eliminados. Espacio liberado: {round(freed, 2)} MB")
+    
