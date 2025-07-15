@@ -59,10 +59,6 @@ def login_required(f):
     wrapper.__name__ = f.__name__  # Flask fix
     return wrapper
 
-web_app.route("/vault/<user_id>/")(login_required(user_vault))
-web_app.route("/delete/<user_id>/<filename>")(login_required(delete_file))
-
-
 @web_app.route("/vault/")
 def vault_index():
     try:
