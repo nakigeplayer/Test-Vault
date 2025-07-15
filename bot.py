@@ -1,12 +1,12 @@
 import os
 import asyncio
 import threading
-from flask import Flask, send_from_directory, abort, render_template_string
+from flask import Flask, send_from_directory, abort, render_template_string, redirect
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from dotenv import load_dotenv
 
-# Cargar entorno
+# Cargar variables de entorno
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
@@ -19,9 +19,11 @@ BASE_URL = f"https://{RENDER_APP_NAME}.onrender.com"
 
 # Estado global
 total_storage_usage = 0.0
-active_files = {}  # file_id: (filename, user_id, file_size_mb)
+active_files = {}         # file_id: (filename, user_id, file_size_mb)
+download_counter = 1      # Código numérico 000001+
+download_map = {}         # download_code: (user_id, filename)
 
-# --- Flask server ---
+# --- Flask ---
 web_app = Flask(__name__)
 
 @web_app.route("/")
@@ -43,16 +45,21 @@ def user_vault(user_id):
     if not os.path.exists(user_path):
         abort(404)
     files = os.listdir(user_path)
-    links = [
-        f"<li><a href='/vault/{user_id}/{f}'>{f}</a></li>"
-        for f in files
-    ]
+    links = [f"<li><a href='/vault/{user_id}/{f}'>{f}</a></li>" for f in files]
     return render_template_string(f"<h2>Archivos de usuario {user_id}:</h2><ul>" + "".join(links) + "</ul>")
 
-@web_app.route("/vault/<user_id>/<file_name>")
-def serve_file(user_id, file_name):
+@web_app.route("/vault/<user_id>/<filename>")
+def serve_file(user_id, filename):
     dir_path = os.path.join(VAULT_FOLDER, user_id)
-    return send_from_directory(dir_path, file_name)
+    return send_from_directory(dir_path, filename)
+
+@web_app.route("/download/<code>")
+def download_redirect(code):
+    entry = download_map.get(code)
+    if not entry:
+        return "⚠️ Código de descarga inválido o expirado.", 404
+    user_id, filename = entry
+    return redirect(f"/vault/{user_id}/{filename}")
 
 def run_flask():
     web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
@@ -89,6 +96,14 @@ def get_file_info(message: Message):
     size_mb = media.file_size / (1024 * 1024) if media.file_size else 0.0
     return filename, media.file_id, size_mb
 
+def next_download_code():
+    global download_counter
+    code = f"{download_counter:06d}"
+    download_counter += 1
+    if download_counter > 999999:
+        download_counter = 1
+    return code
+
 @bot_app.on_message(filters.media)
 async def handle_media(client: Client, message: Message):
     global total_storage_usage
@@ -110,20 +125,25 @@ async def handle_media(client: Client, message: Message):
     total_storage_usage += file_size_mb
     active_files[file_id] = (filename, user_id, file_size_mb)
 
-    public_link = f"{BASE_URL}/vault/{user_id}/{filename}"
-    await message.reply(f"Archivo guardado por {FILE_DURATION_MIN} minutos: [Abrir]({public_link})", disable_web_page_preview=True)
+    code = next_download_code()
+    download_map[code] = (user_id, filename)
 
-    asyncio.create_task(remove_file_later(client, message, file_id, file_path))
+    public_link = f"{BASE_URL}/download/{code}"
+    await message.reply(f"Archivo guardado por {FILE_DURATION_MIN} minutos: [Descargar]({public_link})", disable_web_page_preview=True)
 
-async def remove_file_later(client: Client, message: Message, file_id: str, path: str):
+    asyncio.create_task(remove_file_later(client, message, file_id, file_path, code))
+
+async def remove_file_later(client: Client, message: Message, file_id: str, path: str, code: str):
     global total_storage_usage
-
     await asyncio.sleep(FILE_DURATION_MIN * 60)
+
     if os.path.exists(path):
         os.remove(path)
 
-    _, _, size_mb = active_files.pop(file_id, (None, None, 0.0))
+    filename, user_id, size_mb = active_files.pop(file_id, (None, None, 0.0))
+    download_map.pop(code, None)
     total_storage_usage = max(0.0, total_storage_usage - size_mb)
+
     await message.reply("archivo borrado", quote=True)
 
 @bot_app.on_message(filters.command("clear"))
@@ -152,9 +172,15 @@ async def clear_user_files(client: Client, message: Message):
     except:
         pass
 
+    # Eliminar mirror entries relacionados
+    to_remove = [code for code, (uid, _) in download_map.items() if uid == user_id]
+    for code in to_remove:
+        download_map.pop(code)
+
     total_storage_usage = max(0.0, total_storage_usage - freed)
     await message.reply(f"🧹 Archivos eliminados. Espacio liberado: {round(freed, 2)} MB")
 
+# --- Ejecutar servicios ---
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
     bot_app.run()
