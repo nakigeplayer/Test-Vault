@@ -6,24 +6,27 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 from dotenv import load_dotenv
 
-# Cargar configuración del entorno
+# Cargar entorno
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 STORAGE_LIMIT_MB = 1000
 VAULT_FOLDER = "vault"
+FILE_DURATION_MIN = int(os.getenv("FILE_DURATION_MIN", 20))
+RENDER_APP_NAME = os.getenv("RENDER_APP_NAME", "tu_app")
+BASE_URL = f"https://{RENDER_APP_NAME}.onrender.com"
 
-# Variables globales
+# Estado global
 total_storage_usage = 0.0
 active_files = {}  # file_id: (filename, user_id, file_size_mb)
 
-# --- Servidor Flask ---
+# --- Flask server ---
 web_app = Flask(__name__)
 
 @web_app.route("/")
 def index():
-    return "🚀 Vault activo. Archivos temporales disponibles por 20 minutos."
+    return "🚀 Vault activo. Archivos temporales disponibles."
 
 @web_app.route("/vault/")
 def vault_index():
@@ -54,12 +57,11 @@ def serve_file(user_id, file_name):
 def run_flask():
     web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
-# --- Pyrogram Bot ---
+# --- Pyrogram bot ---
 bot_app = Client("vault_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 def get_file_info(message: Message):
-    media = None
-    filename = None
+    media, filename = None, None
     if message.document:
         media = message.document
         filename = media.file_name or media.file_id
@@ -108,15 +110,15 @@ async def handle_media(client: Client, message: Message):
     total_storage_usage += file_size_mb
     active_files[file_id] = (filename, user_id, file_size_mb)
 
-    public_link = f"https://auto-resend-ctns.onrender.com/vault/{user_id}/{filename}"
-    await message.reply(f"Archivo guardado temporalmente: [Abrir]({public_link})", disable_web_page_preview=True)
+    public_link = f"{BASE_URL}/vault/{user_id}/{filename}"
+    await message.reply(f"Archivo guardado por {FILE_DURATION_MIN} minutos: [Abrir]({public_link})", disable_web_page_preview=True)
 
     asyncio.create_task(remove_file_later(client, message, file_id, file_path))
 
 async def remove_file_later(client: Client, message: Message, file_id: str, path: str):
     global total_storage_usage
 
-    await asyncio.sleep(1200)
+    await asyncio.sleep(FILE_DURATION_MIN * 60)
     if os.path.exists(path):
         os.remove(path)
 
@@ -124,7 +126,6 @@ async def remove_file_later(client: Client, message: Message, file_id: str, path
     total_storage_usage = max(0.0, total_storage_usage - size_mb)
     await message.reply("archivo borrado", quote=True)
 
-# --- Comando /clear ---
 @bot_app.on_message(filters.command("clear"))
 async def clear_user_files(client: Client, message: Message):
     global total_storage_usage
@@ -136,13 +137,13 @@ async def clear_user_files(client: Client, message: Message):
         await message.reply("No tienes archivos almacenados.")
         return
 
-    total_freed = 0.0
+    freed = 0.0
     for filename in os.listdir(user_path):
-        file_path = os.path.join(user_path, filename)
         try:
+            file_path = os.path.join(user_path, filename)
             size_mb = os.path.getsize(file_path) / (1024 * 1024)
             os.remove(file_path)
-            total_freed += size_mb
+            freed += size_mb
         except:
             continue
 
@@ -151,8 +152,8 @@ async def clear_user_files(client: Client, message: Message):
     except:
         pass
 
-    total_storage_usage = max(0.0, total_storage_usage - total_freed)
-    await message.reply(f"🧹 Archivos eliminados. Espacio liberado: {round(total_freed, 2)} MB")
+    total_storage_usage = max(0.0, total_storage_usage - freed)
+    await message.reply(f"🧹 Archivos eliminados. Espacio liberado: {round(freed, 2)} MB")
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
