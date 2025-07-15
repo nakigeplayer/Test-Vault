@@ -18,7 +18,7 @@ active_files = {}  # file_id: (user_id, file_size_mb)
 # Inicializa el bot
 app = Client("vault_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# Extrae tamaño del archivo según el tipo de media
+# Extrae el tamaño del archivo según el tipo de media
 def get_file_size_mb(message: Message) -> float:
     media = None
     if message.document:
@@ -37,8 +37,26 @@ def get_file_size_mb(message: Message) -> float:
         media = message.sticker
     else:
         return 0.0
-
     return media.file_size / (1024 * 1024) if media.file_size else 0.0
+
+# Extrae el file_id según el tipo de media
+def extract_file_id(message: Message) -> str:
+    if message.document:
+        return message.document.file_id
+    elif message.photo:
+        return message.photo.file_id
+    elif message.audio:
+        return message.audio.file_id
+    elif message.video:
+        return message.video.file_id
+    elif message.voice:
+        return message.voice.file_id
+    elif message.animation:
+        return message.animation.file_id
+    elif message.sticker and message.sticker.file_id:
+        return message.sticker.file_id
+    else:
+        return "unknown_file_id"
 
 # Maneja mensajes multimedia
 @app.on_message(filters.media)
@@ -48,13 +66,12 @@ async def handle_media(client: Client, message: Message):
     user_id = str(message.from_user.id)
     file_size_mb = get_file_size_mb(message)
 
-    # Verifica el límite global
     if total_storage_usage + file_size_mb > STORAGE_LIMIT_MB:
         await message.reply("No puedo almacenar más archivos ahora")
         return
 
     total_storage_usage += file_size_mb
-    file_id = message.media.file_id
+    file_id = extract_file_id(message)
     file_path = f"vault/{user_id}/{file_id}"
 
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -79,6 +96,5 @@ async def remove_file_later(client: Client, message: Message, file_id: str, path
 
     await message.reply("archivo borrado", quote=True)
 
-# Ejecuta el bot
+# Ejecutar el bot
 app.run()
-  
