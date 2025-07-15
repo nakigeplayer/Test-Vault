@@ -187,6 +187,11 @@ async def clear_user_files(client: Client, message: Message):
     total_storage_usage = max(0.0, total_storage_usage - freed)
     await message.reply(f"🧹 Archivos eliminados. Espacio liberado: {round(freed, 2)} MB")
 
+@web_app.errorhandler(404)
+def not_found_error(e):
+    return "🛑 El archivo no existe o fue eliminado.", 404
+
+
 @web_app.route("/delete/<user_id>/<filename>")
 def delete_file(user_id, filename):
     file_path = os.path.join(VAULT_FOLDER, user_id, filename)
@@ -196,21 +201,22 @@ def delete_file(user_id, filename):
             file_id = fid
             break
 
-    if os.path.exists(file_path):
-        os.remove(file_path)
-
-    if file_id:
-        _, _, size_mb = active_files.pop(file_id, (None, None, 0.0))
-        total_storage_usage = max(0.0, total_storage_usage - size_mb)
-
-    # Notificar al bot
     try:
-        msg = f"Archivo '{filename}' de usuario {user_id} eliminado manualmente."
-        asyncio.create_task(bot_app.send_message(chat_id=int(user_id), text=msg))
-    except Exception as e:
-        print("Error enviando notificación:", e)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        if file_id:
+            _, _, size_mb = active_files.pop(file_id, (None, None, 0.0))
+            global total_storage_usage
+            total_storage_usage = max(0.0, total_storage_usage - size_mb)
 
-    return redirect(f"/vault/{user_id}/")
+        # Notificación al bot
+        asyncio.create_task(bot_app.send_message(chat_id=int(user_id),
+                                                  text=f"🗑️ Archivo '{filename}' eliminado manualmente."))
+
+        return "✅ Archivo eliminado correctamente."
+    except Exception as e:
+        return f"⚠️ Error eliminando el archivo: {str(e)}", 500
+
 
 # --- Ejecutar servicios ---
 if __name__ == "__main__":
