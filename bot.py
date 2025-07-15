@@ -5,6 +5,10 @@ from flask import Flask, send_from_directory, abort, render_template_string, red
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from dotenv import load_dotenv
+from flask import Flask, send_from_directory, abort, render_template_string, redirect, request, session
+web_app.secret_key = os.getenv("SECRET_KEY", "clave_segura_predeterminada")
+
+
 
 # Cargar variables de entorno
 load_dotenv()
