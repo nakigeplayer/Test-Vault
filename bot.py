@@ -62,6 +62,7 @@ def login_required(f):
 web_app.route("/vault/<user_id>/")(login_required(user_vault))
 web_app.route("/delete/<user_id>/<filename>")(login_required(delete_file))
 
+
 @web_app.route("/vault/")
 def vault_index():
     try:
@@ -70,7 +71,7 @@ def vault_index():
         return render_template_string("<h2>Usuarios disponibles:</h2><ul>" + "".join(links) + "</ul>")
     except FileNotFoundError:
         return "No hay archivos almacenados."
-
+@login_required
 @web_app.route("/vault/<user_id>/")
 def user_vault(user_id):
     user_path = os.path.join(VAULT_FOLDER, user_id)
@@ -233,7 +234,8 @@ def safe_notify(chat_id, msg):
             loop.run_until_complete(bot_app.send_message(chat_id=chat_id, text=msg))
     except Exception as e:
         print("No se pudo notificar al usuario:", e)
-
+        
+@login_required
 @web_app.route("/delete/<user_id>/<filename>")
 def delete_file(user_id, filename):
     try:
