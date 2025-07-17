@@ -12,7 +12,7 @@ load_dotenv()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-STORAGE_LIMIT_MB = 1000
+STORAGE_LIMIT_MB = int(os.getenv("STORAGE_LIMIT_MB", 1000))
 VAULT_FOLDER = "vault"
 FILE_DURATION_MIN = int(os.getenv("FILE_DURATION_MIN", 20))
 RENDER_APP_NAME = os.getenv("RENDER_APP_NAME", "tu_app")
