@@ -171,6 +171,15 @@ async def handle_up_command(client: Client, message: Message):
     if not message.reply_to_message or not message.reply_to_message.media:
         await message.reply("❌ Este comando debe responder a un archivo.")
         return
+
+    sender = message.from_user
+    admin_first = os.getenv("ADMIN_USER", "").lower()
+    sender_first = (sender.first_name or "").lower()
+
+    if not sender.is_self and sender_first != admin_first:
+        await message.reply("Este comando es automanejado por el bot.")
+        return
+
     try:
         _, inst, mins, uid = message.text.split()
         inst = int(inst)
@@ -179,8 +188,10 @@ async def handle_up_command(client: Client, message: Message):
     except ValueError:
         await message.reply("⚠️ Uso incorrecto. Formato: /up <instancia> <minutos> <user_id>")
         return
+
     if inst != INSTANCE:
         return
+
     fname, fid, size_mb = get_info(message.reply_to_message)
     path = os.path.join(VAULT_FOLDER, user_id, secure_filename(fname))
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -190,20 +201,30 @@ async def handle_up_command(client: Client, message: Message):
         "user_id": user_id,
         "size_mb": size_mb,
         "timestamp": datetime.now().timestamp(),
-        "duration": mins  # duración personalizada por archivo
+        "duration": mins
     }
     usage = load_storage_map()
     usage[str(INSTANCE)] += size_mb
     save_storage_map(usage)
     link = f"{BASE_URL}/vault/{user_id}/{secure_filename(fname)}"
     await client.send_message(int(user_id), f"✅ Tu archivo está en Instancia {INSTANCE}. Descárgalo aquí:\n{link}")
-                                             
+@bot_app.on_message(filters.command("clear"))
+async def clear_manager(client, message):
+    usage = load_storage_map()
+    report = []
+
+    for i in range(1, TOTAL_INSTANCES + 1):
+        freed = round(float(usage.get(str(i), 0.0)), 2)
+        report.append(f"🗂 Instancia {i}: {freed} MB liberados")
+
+    msg = "\n".join(report)
+    await message.reply(f"🧹 Estado del almacenamiento por instancia:\n{msg}")
+
 @bot_app_instance.on_message(filters.command("clear"))
-async def clear(client, message):
+async def clear_uploader(client, message):
     user_id = str(message.from_user.id)
     folder = os.path.join(VAULT_FOLDER, user_id)
     if not os.path.exists(folder):
-        await message.reply("No tienes archivos.")
         return
     freed = 0.0
     for f in os.listdir(folder):
@@ -211,14 +232,16 @@ async def clear(client, message):
         try:
             freed += os.path.getsize(fpath) / (1024 * 1024)
             os.remove(fpath)
-        except: continue
-    try: os.rmdir(folder)
-    except: pass
+        except:
+            continue
+    try:
+        os.rmdir(folder)
+    except:
+        pass
     usage = load_storage_map()
     usage[str(INSTANCE)] = max(0.0, usage.get(str(INSTANCE), 0.0) - freed)
     save_storage_map(usage)
-    await message.reply(f"🧹 {round(freed,2)} MB borrados en la Instancia {INSTANCE}")
-
+    
 def start_expiration_checker():
     async def check_files():
         while True:
