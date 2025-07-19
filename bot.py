@@ -221,6 +221,5 @@ def run_flask():
     web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
 if __name__ == "__main__":
-    if INSTANCE == 1:
-        threading.Thread(target=run_flask).start()
+    threading.Thread(target=run_flask).start()
     bot_app.run()
