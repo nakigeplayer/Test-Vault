@@ -52,6 +52,9 @@ def get_info(msg: Message):
 # --- Web ---
 web_app = Flask(__name__)
 web_app.secret_key = os.getenv("SECRET_KEY", "clave_segura")
+@web_app.route("/")
+def home():
+    return "🟢 Servicio en línea. Instancia Flask funcionando correctamente."
 
 def login_required(f):
     def wrapper(*args, **kwargs):
@@ -185,10 +188,13 @@ def run_flask():
 import asyncio
 import threading
 
-def run_bot(bot_instance):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    bot_instance.run()
+def run_bot(bot_instance, label):
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        bot_instance.run()
+    except Exception as e:
+        print(f"[{label}] ❌ Error ejecutando bot: {e}")
 
 import time
 
@@ -200,3 +206,4 @@ if __name__ == "__main__":
     # Mantener hilo principal vivo
     while True:
         time.sleep(10)
+
