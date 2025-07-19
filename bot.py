@@ -1,39 +1,46 @@
 import os
 import asyncio
 import threading
-from flask import Flask, send_from_directory, abort, render_template_string, redirect
+import json
+import re
+from flask import Flask, send_from_directory, abort, render_template_string, redirect, request, session
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from dotenv import load_dotenv
-from flask import Flask, send_from_directory, abort, render_template_string, redirect, request, session
 
-# Cargar variables de entorno
 load_dotenv()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
 STORAGE_LIMIT_MB = int(os.getenv("STORAGE_LIMIT_MB", 1000))
-VAULT_FOLDER = "vault"
 FILE_DURATION_MIN = int(os.getenv("FILE_DURATION_MIN", 20))
+VAULT_FOLDER = "vault"
 RENDER_APP_NAME = os.getenv("RENDER_APP_NAME", "tu_app")
 BASE_URL = f"https://{RENDER_APP_NAME}.onrender.com"
 
-# Estado global
+INSTANCE = int(os.getenv("INSTANCE", 1))
+TOTAL_INSTANCES = int(os.getenv("TOTAL_INSTANCES", 1))
+
 total_storage_usage = 0.0
-active_files = {}         # file_id: (filename, user_id, file_size_mb)
-download_counter = 1      # Código numérico 000001+
-download_map = {}         # download_code: (user_id, filename)
+active_files = {}
+download_counter = 1
+download_map = {}
+
+instance_storage_path = "storage_map.json"
+
+def load_storage_map():
+    if os.path.exists(instance_storage_path):
+        with open(instance_storage_path, "r") as f:
+            return json.load(f)
+    return {str(i): 0.0 for i in range(1, TOTAL_INSTANCES + 1)}
+
+def save_storage_map(map_data):
+    with open(instance_storage_path, "w") as f:
+        json.dump(map_data, f)
 
 # --- Flask ---
 web_app = Flask(__name__)
-
-web_app.secret_key = os.getenv("SECRET_KEY", "clave_segura_predeterminada")
-
-@web_app.route("/")
-def index():
-    return "🚀 Vault activo. Archivos temporales disponibles."
-
-from flask import session
 web_app.secret_key = os.getenv("SECRET_KEY", "clave_super_segura")
 
 @web_app.route("/login", methods=["GET", "POST"])
@@ -59,10 +66,11 @@ def login_required(f):
         if not session.get("logged_in"):
             return redirect("/login")
         return f(*args, **kwargs)
-    wrapper.__name__ = f.__name__  # Flask fix
+    wrapper.__name__ = f.__name__
     return wrapper
 
 @web_app.route("/vault/")
+@login_required
 def vault_index():
     try:
         users = os.listdir(VAULT_FOLDER)
@@ -70,8 +78,9 @@ def vault_index():
         return render_template_string("<h2>Usuarios disponibles:</h2><ul>" + "".join(links) + "</ul>")
     except FileNotFoundError:
         return "No hay archivos almacenados."
-@login_required
+
 @web_app.route("/vault/<user_id>/")
+@login_required
 def user_vault(user_id):
     user_path = os.path.join(VAULT_FOLDER, user_id)
     if not os.path.exists(user_path):
@@ -86,154 +95,15 @@ def user_vault(user_id):
                      f"<a href='/delete/{user_id}/{f}'>🗑️ Eliminar</a></li>")
     return render_template_string(f"<h2>Archivos de usuario {user_id}:</h2><ul>" + "".join(items) + "</ul>")
 
-
 @web_app.route("/vault/<user_id>/<filename>")
 def serve_file(user_id, filename):
     dir_path = os.path.join(VAULT_FOLDER, user_id)
     return send_from_directory(dir_path, filename)
 
-@web_app.route("/download/<code>")
-def download_redirect(code):
-    entry = download_map.get(code)
-    if not entry:
-        return "⚠️ Código de descarga inválido o expirado.", 404
-    user_id, filename = entry
-    return redirect(f"/vault/{user_id}/{filename}")
-
-def run_flask():
-    web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
-# --- Pyrogram bot ---
-bot_app = Client("vault_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-def get_file_info(message: Message):
-    media, filename = None, None
-    if message.document:
-        media = message.document
-        filename = media.file_name or media.file_id
-    elif message.photo:
-        media = message.photo
-        filename = media.file_id
-    elif message.audio:
-        media = message.audio
-        filename = media.file_name or media.file_id
-    elif message.video:
-        media = message.video
-        filename = media.file_name or media.file_id
-    elif message.voice:
-        media = message.voice
-        filename = media.file_id
-    elif message.animation:
-        media = message.animation
-        filename = media.file_id
-    elif message.sticker and message.sticker.file_size:
-        media = message.sticker
-        filename = media.file_id
-    else:
-        return None, None, 0.0
-
-    size_mb = media.file_size / (1024 * 1024) if media.file_size else 0.0
-    return filename, media.file_id, size_mb
-
-def next_download_code():
-    global download_counter
-    code = f"{download_counter:06d}"
-    download_counter += 1
-    if download_counter > 999999:
-        download_counter = 1
-    return code
-
-@bot_app.on_message(filters.media)
-async def handle_media(client: Client, message: Message):
-    global total_storage_usage
-
-    user_id = str(message.from_user.id)
-    filename, file_id, file_size_mb = get_file_info(message)
-    if not filename:
-        await message.reply("No pude identificar el archivo.")
-        return
-
-    if total_storage_usage + file_size_mb > STORAGE_LIMIT_MB:
-        await message.reply("No puedo almacenar más archivos ahora")
-        return
-
-    file_path = os.path.join(VAULT_FOLDER, user_id, filename)
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-    await client.download_media(message, file_path)
-    total_storage_usage += file_size_mb
-    active_files[file_id] = (filename, user_id, file_size_mb)
-
-    code = next_download_code()
-    download_map[code] = (user_id, filename)
-
-    public_link = f"{BASE_URL}/download/{code}"
-    await message.reply(f"Archivo guardado por {FILE_DURATION_MIN} minutos: [Descargar]({public_link})", disable_web_page_preview=True)
-
-    asyncio.create_task(remove_file_later(client, message, file_id, file_path, code))
-
-async def remove_file_later(client: Client, message: Message, file_id: str, path: str, code: str):
-    global total_storage_usage
-    await asyncio.sleep(FILE_DURATION_MIN * 60)
-
-    if os.path.exists(path):
-        os.remove(path)
-
-    filename, user_id, size_mb = active_files.pop(file_id, (None, None, 0.0))
-    download_map.pop(code, None)
-    total_storage_usage = max(0.0, total_storage_usage - size_mb)
-
-    await message.reply("archivo borrado", quote=True)
-
-@bot_app.on_message(filters.command("clear"))
-async def clear_user_files(client: Client, message: Message):
-    global total_storage_usage
-
-    user_id = str(message.from_user.id)
-    user_path = os.path.join(VAULT_FOLDER, user_id)
-
-    if not os.path.exists(user_path):
-        await message.reply("No tienes archivos almacenados.")
-        return
-
-    freed = 0.0
-    for filename in os.listdir(user_path):
-        try:
-            file_path = os.path.join(user_path, filename)
-            size_mb = os.path.getsize(file_path) / (1024 * 1024)
-            os.remove(file_path)
-            freed += size_mb
-        except:
-            continue
-
-    try:
-        os.rmdir(user_path)
-    except:
-        pass
-
-    # Eliminar mirror entries relacionados
-    to_remove = [code for code, (uid, _) in download_map.items() if uid == user_id]
-    for code in to_remove:
-        download_map.pop(code)
-
-    total_storage_usage = max(0.0, total_storage_usage - freed)
-    await message.reply(f"🧹 Archivos eliminados. Espacio liberado: {round(freed, 2)} MB")
-
 @web_app.errorhandler(404)
 def not_found_error(e):
     return "🛑 El archivo no existe o fue eliminado.", 404
-import asyncio
 
-def safe_notify(chat_id, msg):
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.create_task(bot_app.send_message(chat_id=chat_id, text=msg))
-        else:
-            loop.run_until_complete(bot_app.send_message(chat_id=chat_id, text=msg))
-    except Exception as e:
-        print("No se pudo notificar al usuario:", e)
-        
 @login_required
 @web_app.route("/delete/<user_id>/<filename>")
 def delete_file(user_id, filename):
@@ -254,10 +124,103 @@ def delete_file(user_id, filename):
         return "✅ Archivo eliminado satisfactoriamente."
     except Exception as e:
         print("Error al eliminar:", e)
-        return "✅ Archivo eliminado.", 200  # Ignora el error y da éxito
+        return "✅ Archivo eliminado.", 200
 
+def safe_notify(chat_id, msg):
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(bot_app.send_message(chat_id=chat_id, text=msg))
+        else:
+            loop.run_until_complete(bot_app.send_message(chat_id=chat_id, text=msg))
+    except Exception as e:
+        print("No se pudo notificar al usuario:", e)
+
+# --- Pyrogram ---
+bot_app = Client("vault_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+def get_file_info(message: Message):
+    media = next((m for m in [message.document, message.photo, message.audio,
+                              message.video, message.voice, message.animation,
+                              message.sticker] if m), None)
+    filename = getattr(media, "file_name", None) or media.file_id if media else None
+    size_mb = getattr(media, "file_size", 0) / (1024 * 1024) if media else 0.0
+    return filename, media.file_id if media else None, size_mb
+
+def decide_instance(size_mb):
+    usage_map = load_storage_map()
+    for i in range(1, TOTAL_INSTANCES + 1):
+        if usage_map.get(str(i), 0.0) + size_mb <= STORAGE_LIMIT_MB:
+            return i
+    return 1
+
+@bot_app.on_message(filters.media)
+async def handle_media(client: Client, message: Message):
+    if INSTANCE != 1:
+        return
+
+    filename, file_id, size_mb = get_file_info(message)
+    if not filename:
+        await message.reply("Archivo no identificado.")
+        return
+
+    target_instance = decide_instance(size_mb)
+    usage_map = load_storage_map()
+    usage_map[str(target_instance)] += size_mb
+    save_storage_map(usage_map)
+
+    reply_msg = f"Subiendo a la Instancia {target_instance} durante {FILE_DURATION_MIN} minutos"
+    await message.reply(reply_msg, quote=True)
+
+@bot_app.on_message(filters.text & filters.incoming)
+async def handle_instance_message(client: Client, message: Message):
+    match = re.search(r"Instancia (\d+)", message.text)
+    if not match or int(match.group(1)) != INSTANCE:
+        return
+
+    original = message.reply_to_message
+    if not original or not original.media:
+        return
+
+    filename, file_id, size_mb = get_file_info(original)
+    user_id = str(original.from_user.id)
+    file_path = os.path.join(VAULT_FOLDER, user_id, filename)
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+    await client.download_media(original, file_path)
+    total_storage_usage += size_mb
+    active_files[file_id] = (filename, user_id, size_mb)
+
+@bot_app.on_message(filters.command("clear"))
+async def clear_files(client: Client, message: Message):
+    user_id = str(message.from_user.id)
+    path = os.path.join(VAULT_FOLDER, user_id)
+
+    if not os.path.exists(path):
+        await message.reply("No tienes archivos.")
+        return
+
+    freed = 0.0
+    for fname in os.listdir(path):
+        fpath = os.path.join(path, fname)
+        try:
+            freed += os.path.getsize(fpath) / (1024 * 1024)
+            os.remove(fpath)
+        except: pass
+    try:
+        os.rmdir(path)
+    except: pass
+
+    usage_map = load_storage_map()
+    usage_map[str(INSTANCE)] = max(0.0, usage_map.get(str(INSTANCE), 0.0) - freed)
+    save_storage_map(usage_map)
+    await message.reply(f"🧹 Archivos eliminados. Espacio liberado: {round(freed, 2)} MB en la Instancia {INSTANCE}")
 
 # --- Ejecutar servicios ---
+def run_flask():
+    web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
+    if INSTANCE == 1:
+        threading.Thread(target=run_flask).start()
     bot_app.run()
