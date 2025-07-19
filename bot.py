@@ -133,22 +133,25 @@ async def receive_media(client, message):
     msg = f"Subiendo a la Instancia {target} durante {FILE_DURATION_MIN} minutos para el usuario {user_id}"
     await message.reply(msg, quote=True)
 
-@bot_app.on_message(filters.text)
-async def handle_redirect(client, message):
+@bot_app.on_message(filters.text & filters.incoming)
+async def handle_redirect(client: Client, message: Message):
+
     match = re.search(r"Instancia (\d+) .*usuario (\d+)", message.text)
     if not match or int(match.group(1)) != INSTANCE:
         return
 
     user_id = match.group(2)
-    replied = message.reply_to_message
-    if not replied or not replied.media:
+    original = message.reply_to_message
+
+    if not original or not (original.document or original.photo or original.video or original.audio):
+        await message.reply("❌ No se encontró el archivo original en la respuesta.")
         return
 
-    fname, fid, size_mb = get_info(replied)
+    fname, fid, size_mb = get_info(original)
     path = os.path.join(VAULT_FOLDER, user_id, fname)
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    await client.download_media(replied, path)
+    await client.download_media(original, path)
     active_files[fid] = (fname, user_id, size_mb)
 
     usage = load_storage_map()
