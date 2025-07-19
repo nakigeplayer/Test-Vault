@@ -182,10 +182,15 @@ async def clear(client, message):
 def run_flask():
     web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
+import asyncio
 import threading
+
+def run_bot(bot_instance):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    bot_instance.run()
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
-    threading.Thread(target=bot_app.run).start()
-    threading.Thread(target=bot_app_instance.run).start()
-
+    threading.Thread(target=lambda: run_bot(bot_app)).start()
+    threading.Thread(target=lambda: run_bot(bot_app_instance)).start()
