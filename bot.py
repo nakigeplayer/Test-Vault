@@ -190,7 +190,13 @@ def run_bot(bot_instance):
     asyncio.set_event_loop(loop)
     bot_instance.run()
 
+import time
+
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
-    threading.Thread(target=lambda: run_bot(bot_app)).start()
-    threading.Thread(target=lambda: run_bot(bot_app_instance)).start()
+    threading.Thread(target=lambda: run_bot(bot_app, "Bot 1")).start()
+    threading.Thread(target=lambda: run_bot(bot_app_instance, "Bot 2")).start()
+
+    # Mantener hilo principal vivo
+    while True:
+        time.sleep(10)
