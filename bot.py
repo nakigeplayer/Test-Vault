@@ -184,5 +184,5 @@ def run_flask():
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
-    threading.Thread(target=bot_app.run).start()
-    threading.Thread(target=bot_app_instance).start()
+    bot_app.run()
+    bot_app_instance.run()
