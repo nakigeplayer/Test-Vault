@@ -1,65 +1,51 @@
 import os
+import re
+import json
 import asyncio
 import threading
-import json
-import re
 from flask import Flask, send_from_directory, abort, render_template_string, redirect, request, session
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from dotenv import load_dotenv
 
 load_dotenv()
+
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
 STORAGE_LIMIT_MB = int(os.getenv("STORAGE_LIMIT_MB", 1000))
 FILE_DURATION_MIN = int(os.getenv("FILE_DURATION_MIN", 20))
-VAULT_FOLDER = "vault"
+INSTANCE = int(os.getenv("INSTANCE", 1))
+TOTAL_INSTANCES = int(os.getenv("TOTAL_INSTANCES", 1))
 RENDER_APP_NAME = os.getenv("RENDER_APP_NAME", "tu_app")
 BASE_URL = f"https://{RENDER_APP_NAME}.onrender.com"
 
-INSTANCE = int(os.getenv("INSTANCE", 1))
-TOTAL_INSTANCES = int(os.getenv("TOTAL_INSTANCES", 1))
-
+VAULT_FOLDER = "vault"
+storage_path = "storage_map.json"
 total_storage_usage = 0.0
 active_files = {}
-download_counter = 1
-download_map = {}
 
-instance_storage_path = "storage_map.json"
-
+# ---- Utilidades de almacenamiento por instancia ----
 def load_storage_map():
-    if os.path.exists(instance_storage_path):
-        with open(instance_storage_path, "r") as f:
+    if os.path.exists(storage_path):
+        with open(storage_path, "r") as f:
             return json.load(f)
     return {str(i): 0.0 for i in range(1, TOTAL_INSTANCES + 1)}
 
-def save_storage_map(map_data):
-    with open(instance_storage_path, "w") as f:
-        json.dump(map_data, f)
+def save_storage_map(data):
+    with open(storage_path, "w") as f:
+        json.dump(data, f)
 
-# --- Flask ---
+def decide_instance(size_mb):
+    usage = load_storage_map()
+    for i in range(1, TOTAL_INSTANCES + 1):
+        if usage.get(str(i), 0.0) + size_mb <= STORAGE_LIMIT_MB:
+            return i
+    return 1
+
+# ---- Web ----
 web_app = Flask(__name__)
-web_app.secret_key = os.getenv("SECRET_KEY", "clave_super_segura")
-
-@web_app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
-        if username == os.getenv("ADMIN_USER") and password == os.getenv("ADMIN_PASS"):
-            session["logged_in"] = True
-            return redirect("/vault/")
-        else:
-            return "Credenciales incorrectas.", 403
-    return render_template_string("""
-    <form method="post">
-      <input name="username" placeholder="Usuario"><br>
-      <input type="password" name="password" placeholder="Contraseña"><br>
-      <input type="submit" value="Ingresar">
-    </form>
-    """)
+web_app.secret_key = os.getenv("SECRET_KEY", "clave_segura")
 
 def login_required(f):
     def wrapper(*args, **kwargs):
@@ -69,154 +55,134 @@ def login_required(f):
     wrapper.__name__ = f.__name__
     return wrapper
 
+@web_app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        u = request.form.get("username")
+        p = request.form.get("password")
+        if u == os.getenv("ADMIN_USER") and p == os.getenv("ADMIN_PASS"):
+            session["logged_in"] = True
+            return redirect("/vault/")
+        return "Credenciales incorrectas", 403
+    return render_template_string("""
+    <form method="post">
+      <input name="username" placeholder="Usuario"><br>
+      <input type="password" name="password" placeholder="Contraseña"><br>
+      <input type="submit" value="Ingresar">
+    </form>
+    """)
+
 @web_app.route("/vault/")
 @login_required
-def vault_index():
+def index():
     try:
         users = os.listdir(VAULT_FOLDER)
         links = [f"<li><a href='/vault/{uid}/'>{uid}</a></li>" for uid in users]
-        return render_template_string("<h2>Usuarios disponibles:</h2><ul>" + "".join(links) + "</ul>")
+        return render_template_string(f"<h2>Instancia {INSTANCE}</h2><ul>" + "".join(links) + "</ul>")
     except FileNotFoundError:
         return "No hay archivos almacenados."
 
-@web_app.route("/vault/<user_id>/")
+@web_app.route("/vault/<user>/")
 @login_required
-def user_vault(user_id):
-    user_path = os.path.join(VAULT_FOLDER, user_id)
-    if not os.path.exists(user_path):
-        abort(404)
-    files = os.listdir(user_path)
+def user_files(user):
+    path = os.path.join(VAULT_FOLDER, user)
+    if not os.path.exists(path):
+        return "Usuario no encontrado.", 404
+    files = os.listdir(path)
     items = []
     for f in files:
-        file_path = os.path.join(user_path, f)
-        size_mb = os.path.getsize(file_path) / (1024 * 1024)
-        items.append(f"<li>{f} - {round(size_mb, 2)} MB "
-                     f"<a href='/vault/{user_id}/{f}'>[Descargar]</a> "
-                     f"<a href='/delete/{user_id}/{f}'>🗑️ Eliminar</a></li>")
-    return render_template_string(f"<h2>Archivos de usuario {user_id}:</h2><ul>" + "".join(items) + "</ul>")
+        fpath = os.path.join(path, f)
+        size = os.path.getsize(fpath) / (1024 * 1024)
+        items.append(f"<li>{f} ({round(size,2)} MB) <a href='/vault/{user}/{f}'>Descargar</a></li>")
+    return render_template_string(f"<h3>Archivos de {user}</h3><ul>" + "".join(items) + "</ul>")
 
-@web_app.route("/vault/<user_id>/<filename>")
-def serve_file(user_id, filename):
-    dir_path = os.path.join(VAULT_FOLDER, user_id)
-    return send_from_directory(dir_path, filename)
+@web_app.route("/vault/<user>/<filename>")
+def serve(user, filename):
+    return send_from_directory(os.path.join(VAULT_FOLDER, user), filename)
 
 @web_app.errorhandler(404)
-def not_found_error(e):
-    return "🛑 El archivo no existe o fue eliminado.", 404
+def not_found(e):
+    return "🛑 Archivo no encontrado", 404
 
-@login_required
-@web_app.route("/delete/<user_id>/<filename>")
-def delete_file(user_id, filename):
-    try:
-        file_path = os.path.join(VAULT_FOLDER, user_id, filename)
-        if os.path.exists(file_path):
-            os.remove(file_path)
+# ---- Bot ----
+bot_app = Client("vault", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-        file_id = next((fid for fid, (fname, uid, _) in active_files.items()
-                        if fname == filename and uid == user_id), None)
-
-        if file_id:
-            _, _, size_mb = active_files.pop(file_id, (None, None, 0.0))
-            global total_storage_usage
-            total_storage_usage = max(0.0, total_storage_usage - size_mb)
-
-        safe_notify(int(user_id), f"🗑️ Archivo '{filename}' eliminado manualmente.")
-        return "✅ Archivo eliminado satisfactoriamente."
-    except Exception as e:
-        print("Error al eliminar:", e)
-        return "✅ Archivo eliminado.", 200
-
-def safe_notify(chat_id, msg):
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.create_task(bot_app.send_message(chat_id=chat_id, text=msg))
-        else:
-            loop.run_until_complete(bot_app.send_message(chat_id=chat_id, text=msg))
-    except Exception as e:
-        print("No se pudo notificar al usuario:", e)
-
-# --- Pyrogram ---
-bot_app = Client("vault_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-def get_file_info(message: Message):
-    media = next((m for m in [message.document, message.photo, message.audio,
-                              message.video, message.voice, message.animation,
-                              message.sticker] if m), None)
-    filename = getattr(media, "file_name", None) or media.file_id if media else None
-    size_mb = getattr(media, "file_size", 0) / (1024 * 1024) if media else 0.0
-    return filename, media.file_id if media else None, size_mb
-
-def decide_instance(size_mb):
-    usage_map = load_storage_map()
-    for i in range(1, TOTAL_INSTANCES + 1):
-        if usage_map.get(str(i), 0.0) + size_mb <= STORAGE_LIMIT_MB:
-            return i
-    return 1
+def get_info(msg: Message):
+    media = next((m for m in [msg.document, msg.photo, msg.audio, msg.video, msg.voice, msg.animation, msg.sticker] if m), None)
+    fname = getattr(media, "file_name", None) or media.file_id if media else None
+    fid = media.file_id if media else None
+    size = getattr(media, "file_size", 0) / (1024 * 1024) if media else 0.0
+    return fname, fid, size
 
 @bot_app.on_message(filters.media)
-async def handle_media(client: Client, message: Message):
+async def receive_media(client, message):
     if INSTANCE != 1:
         return
 
-    filename, file_id, size_mb = get_file_info(message)
-    if not filename:
-        await message.reply("Archivo no identificado.")
+    user_id = message.from_user.id
+    fname, fid, size_mb = get_info(message)
+    if not fname:
+        await message.reply("No pude identificar el archivo.")
         return
 
-    target_instance = decide_instance(size_mb)
-    usage_map = load_storage_map()
-    usage_map[str(target_instance)] += size_mb
-    save_storage_map(usage_map)
+    target = decide_instance(size_mb)
+    usage = load_storage_map()
+    usage[str(target)] += size_mb
+    save_storage_map(usage)
 
-    reply_msg = f"Subiendo a la Instancia {target_instance} durante {FILE_DURATION_MIN} minutos"
-    await message.reply(reply_msg, quote=True)
+    msg = f"Subiendo a la Instancia {target} durante {FILE_DURATION_MIN} minutos para el usuario {user_id}"
+    await message.reply(msg, quote=True)
 
-@bot_app.on_message(filters.text & filters.incoming)
-async def handle_instance_message(client: Client, message: Message):
-    match = re.search(r"Instancia (\d+)", message.text)
+@bot_app.on_message(filters.text)
+async def handle_redirect(client, message):
+    match = re.search(r"Instancia (\d+) .*usuario (\d+)", message.text)
     if not match or int(match.group(1)) != INSTANCE:
         return
 
-    original = message.reply_to_message
-    if not original or not original.media:
+    user_id = match.group(2)
+    replied = message.reply_to_message
+    if not replied or not replied.media:
         return
 
-    filename, file_id, size_mb = get_file_info(original)
-    user_id = str(original.from_user.id)
-    file_path = os.path.join(VAULT_FOLDER, user_id, filename)
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    fname, fid, size_mb = get_info(replied)
+    path = os.path.join(VAULT_FOLDER, user_id, fname)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    await client.download_media(original, file_path)
-    total_storage_usage += size_mb
-    active_files[file_id] = (filename, user_id, size_mb)
+    await client.download_media(replied, path)
+    active_files[fid] = (fname, user_id, size_mb)
+
+    usage = load_storage_map()
+    usage[str(INSTANCE)] += size_mb
+    save_storage_map(usage)
+
+    link = f"{BASE_URL}/vault/{user_id}/{fname}"
+    await client.send_message(int(user_id), f"✅ Archivo guardado en la Instancia {INSTANCE}. Puedes descargarlo aquí:\n{link}")
 
 @bot_app.on_message(filters.command("clear"))
-async def clear_files(client: Client, message: Message):
+async def clear(client, message):
     user_id = str(message.from_user.id)
-    path = os.path.join(VAULT_FOLDER, user_id)
-
-    if not os.path.exists(path):
+    folder = os.path.join(VAULT_FOLDER, user_id)
+    if not os.path.exists(folder):
         await message.reply("No tienes archivos.")
         return
 
     freed = 0.0
-    for fname in os.listdir(path):
-        fpath = os.path.join(path, fname)
+    for f in os.listdir(folder):
+        fpath = os.path.join(folder, f)
         try:
             freed += os.path.getsize(fpath) / (1024 * 1024)
             os.remove(fpath)
-        except: pass
-    try:
-        os.rmdir(path)
+        except: continue
+    try: os.rmdir(folder)
     except: pass
 
-    usage_map = load_storage_map()
-    usage_map[str(INSTANCE)] = max(0.0, usage_map.get(str(INSTANCE), 0.0) - freed)
-    save_storage_map(usage_map)
-    await message.reply(f"🧹 Archivos eliminados. Espacio liberado: {round(freed, 2)} MB en la Instancia {INSTANCE}")
+    usage = load_storage_map()
+    usage[str(INSTANCE)] = max(0.0, usage.get(str(INSTANCE), 0.0) - freed)
+    save_storage_map(usage)
 
-# --- Ejecutar servicios ---
+    await message.reply(f"🧹 {round(freed,2)} MB borrados en la Instancia {INSTANCE}")
+
+# ---- Ejecutar ----
 def run_flask():
     web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
