@@ -133,7 +133,7 @@ async def receive_media(client, message):
     msg = f"Subiendo a la Instancia {target} durante {FILE_DURATION_MIN} minutos para el usuario {user_id}"
     await message.reply(msg, quote=True)
 
-@bot_app.on_message(filters.text & filters.incoming)
+@bot_app.on_message(filters.text & filters.outgoing)
 async def handle_redirect(client: Client, message: Message):
 
     match = re.search(r"Instancia (\d+) .*usuario (\d+)", message.text)
