@@ -189,14 +189,15 @@ async def handle_up_command(client: Client, message: Message):
         "fname": fname,
         "user_id": user_id,
         "size_mb": size_mb,
-        "timestamp": datetime.now().timestamp()
+        "timestamp": datetime.now().timestamp(),
+        "duration": mins  # duración personalizada por archivo
     }
     usage = load_storage_map()
     usage[str(INSTANCE)] += size_mb
     save_storage_map(usage)
     link = f"{BASE_URL}/vault/{user_id}/{secure_filename(fname)}"
     await client.send_message(int(user_id), f"✅ Tu archivo está en Instancia {INSTANCE}. Descárgalo aquí:\n{link}")
-
+                                             
 @bot_app_instance.on_message(filters.command("clear"))
 async def clear(client, message):
     user_id = str(message.from_user.id)
@@ -224,8 +225,9 @@ def start_expiration_checker():
             now = datetime.now().timestamp()
             expired = []
             for fid, data in list(active_files.items()):
-                age = (now - data["timestamp"]) / 60
-                if age >= FILE_DURATION_MIN:
+                age = (now - data["timestamp"]) / 60  # minutos
+                duration = int(data.get("duration", FILE_DURATION_MIN))
+                if age >= duration:
                     path = os.path.join(VAULT_FOLDER, data["user_id"], secure_filename(data["fname"]))
                     if os.path.exists(path):
                         os.remove(path)
@@ -238,11 +240,11 @@ def start_expiration_checker():
                     expired.append(fid)
                     await bot_app_instance.send_message(
                         int(data["user_id"]),
-                        f"🗑️ Tu archivo `{data['fname']}` ha sido eliminado tras {FILE_DURATION_MIN} minutos."
+                        f"🗑️ Tu archivo `{data['fname']}` fue eliminado tras {duration} minutos."
                     )
             for fid in expired:
                 active_files.pop(fid, None)
-            await asyncio.sleep(60)
+            await asyncio.sleep(60)  # revisar cada minuto
 
     threading.Thread(target=lambda: asyncio.run(check_files()), daemon=True).start()
 
