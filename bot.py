@@ -9,6 +9,7 @@ from werkzeug.utils import secure_filename
 from datetime import datetime
 import asyncio
 import time
+import uuid
 
 # --- Configuración ---
 load_dotenv()
@@ -143,8 +144,11 @@ def not_found(e):
     return "🛑 Archivo no encontrado", 404
 
 # --- Bots ---
-bot_app = Client("vault", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-bot_app_instance = Client("vault_instance", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+session1 = uuid.uuid4().hex
+session2 = uuid.uuid4().hex
+
+bot_app = Client(session1, api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot_app_instance = Client(session2, api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 @bot_app.on_message(filters.media)
 async def receive_media(client, message):
@@ -214,14 +218,13 @@ async def clear(client, message):
     save_storage_map(usage)
     await message.reply(f"🧹 {round(freed,2)} MB borrados en la Instancia {INSTANCE}")
 
-# --- Tareas en segundo plano ---
 def start_expiration_checker():
     async def check_files():
         while True:
             now = datetime.now().timestamp()
             expired = []
             for fid, data in list(active_files.items()):
-                age = (now - data["timestamp"]) / 60  # minutos
+                age = (now - data["timestamp"]) / 60
                 if age >= FILE_DURATION_MIN:
                     path = os.path.join(VAULT_FOLDER, data["user_id"], secure_filename(data["fname"]))
                     if os.path.exists(path):
@@ -233,15 +236,16 @@ def start_expiration_checker():
                     usage[str(INSTANCE)] = max(0.0, usage.get(str(INSTANCE), 0.0) - data["size_mb"])
                     save_storage_map(usage)
                     expired.append(fid)
-                    await bot_app_instance.send_message(int(data["user_id"]),
-                        f"🗑️ Tu archivo `{data['fname']}` ha sido eliminado tras {FILE_DURATION_MIN} minutos.")
+                    await bot_app_instance.send_message(
+                        int(data["user_id"]),
+                        f"🗑️ Tu archivo `{data['fname']}` ha sido eliminado tras {FILE_DURATION_MIN} minutos."
+                    )
             for fid in expired:
                 active_files.pop(fid, None)
-            await asyncio.sleep(60)  # revisar cada minuto
+            await asyncio.sleep(60)
 
     threading.Thread(target=lambda: asyncio.run(check_files()), daemon=True).start()
 
-# --- Ejecutar ---
 def run_flask():
     web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
@@ -256,16 +260,19 @@ def start_bot(bot_instance, label):
 
 if __name__ == "__main__":
     TYPE_SERVICE = os.getenv("TYPE_SERVICE", "Manager").lower()
-
     print(f"🔧 Tipo de servicio: {TYPE_SERVICE}")
+
     if TYPE_SERVICE == "uploader":
         print("🌐 Iniciando Flask (Uploader)...")
         threading.Thread(target=run_flask, daemon=True).start()
         start_expiration_checker()
         bot_app_instance.run()
+
     elif TYPE_SERVICE == "manager":
         print("🤖 Iniciando Bot Manager...")
         bot_app.run()
+
     else:
         print("⚠️ Tipo desconocido, usando Manager por defecto.")
         bot_app.run()
+        
