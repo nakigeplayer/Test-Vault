@@ -182,7 +182,10 @@ async def clear(client, message):
 def run_flask():
     web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
+import threading
+
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
-    bot_app.run()
-    bot_app_instance.run()
+    threading.Thread(target=bot_app.run).start()
+    threading.Thread(target=bot_app_instance.run).start()
+
