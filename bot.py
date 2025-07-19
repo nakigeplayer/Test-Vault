@@ -6,6 +6,9 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
+from datetime import datetime
+import asyncio
+import time
 
 # --- Configuración ---
 load_dotenv()
@@ -52,6 +55,7 @@ def get_info(msg: Message):
 # --- Web ---
 web_app = Flask(__name__)
 web_app.secret_key = os.getenv("SECRET_KEY", "clave_segura")
+
 @web_app.route("/")
 def home():
     return "🟢 Servicio en línea. Instancia Flask funcionando correctamente."
@@ -102,13 +106,37 @@ def user_files(user):
     for f in files:
         fpath = os.path.join(path, f)
         size = os.path.getsize(fpath) / (1024 * 1024)
-        items.append(f"<li>{f} ({round(size,2)} MB) <a href='/vault/{user}/{f}'>Descargar</a></li>")
+        items.append(f"""
+        <li>
+            {f} ({round(size,2)} MB)
+            <a href='/vault/{user}/{f}'>Descargar</a>
+            <form method='POST' action='/vault/{user}/{f}/delete' style='display:inline;'>
+                <button type='submit'>🗑️ Borrar</button>
+            </form>
+        </li>
+        """)
     return render_template_string(f"<h3>Archivos de {user}</h3><ul>" + "".join(items) + "</ul>")
 
 @web_app.route("/vault/<user>/<filename>")
 def serve(user, filename):
     filename = secure_filename(filename)
     return send_from_directory(os.path.join(VAULT_FOLDER, user), filename)
+
+@web_app.route("/vault/<user>/<filename>/delete", methods=["POST"])
+@login_required
+def delete_file(user, filename):
+    filename = secure_filename(filename)
+    path = os.path.join(VAULT_FOLDER, user, filename)
+    if os.path.exists(path):
+        size_mb = os.path.getsize(path) / (1024 * 1024)
+        os.remove(path)
+        try: os.rmdir(os.path.dirname(path))
+        except: pass
+        usage = load_storage_map()
+        usage[str(INSTANCE)] = max(0.0, usage.get(str(INSTANCE), 0.0) - size_mb)
+        save_storage_map(usage)
+        asyncio.run(bot_app_instance.send_message(int(user), f"🧽 Tu archivo `{filename}` fue eliminado manualmente desde el panel web."))
+    return redirect(f"/vault/{user}/")
 
 @web_app.errorhandler(404)
 def not_found(e):
@@ -153,7 +181,12 @@ async def handle_up_command(client: Client, message: Message):
     path = os.path.join(VAULT_FOLDER, user_id, secure_filename(fname))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     await client.download_media(message.reply_to_message, path)
-    active_files[fid] = (fname, user_id, size_mb)
+    active_files[fid] = {
+        "fname": fname,
+        "user_id": user_id,
+        "size_mb": size_mb,
+        "timestamp": datetime.now().timestamp()
+    }
     usage = load_storage_map()
     usage[str(INSTANCE)] += size_mb
     save_storage_map(usage)
@@ -181,13 +214,36 @@ async def clear(client, message):
     save_storage_map(usage)
     await message.reply(f"🧹 {round(freed,2)} MB borrados en la Instancia {INSTANCE}")
 
+# --- Tareas en segundo plano ---
+def start_expiration_checker():
+    async def check_files():
+        while True:
+            now = datetime.now().timestamp()
+            expired = []
+            for fid, data in list(active_files.items()):
+                age = (now - data["timestamp"]) / 60  # minutos
+                if age >= FILE_DURATION_MIN:
+                    path = os.path.join(VAULT_FOLDER, data["user_id"], secure_filename(data["fname"]))
+                    if os.path.exists(path):
+                        os.remove(path)
+                        print(f"⏳ Archivo expirado: {data['fname']}")
+                        try: os.rmdir(os.path.dirname(path))
+                        except: pass
+                    usage = load_storage_map()
+                    usage[str(INSTANCE)] = max(0.0, usage.get(str(INSTANCE), 0.0) - data["size_mb"])
+                    save_storage_map(usage)
+                    expired.append(fid)
+                    await bot_app_instance.send_message(int(data["user_id"]),
+                        f"🗑️ Tu archivo `{data['fname']}` ha sido eliminado tras {FILE_DURATION_MIN} minutos.")
+            for fid in expired:
+                active_files.pop(fid, None)
+            await asyncio.sleep(60)  # revisar cada minuto
+
+    threading.Thread(target=lambda: asyncio.run(check_files()), daemon=True).start()
+
 # --- Ejecutar ---
 def run_flask():
     web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
-import asyncio
-import threading
-import time
 
 def start_bot(bot_instance, label):
     print(f"🟢 [{label}] Iniciando...")
@@ -205,6 +261,7 @@ if __name__ == "__main__":
     if TYPE_SERVICE == "uploader":
         print("🌐 Iniciando Flask (Uploader)...")
         threading.Thread(target=run_flask, daemon=True).start()
+        start_expiration_checker()
         bot_app_instance.run()
     elif TYPE_SERVICE == "manager":
         print("🤖 Iniciando Bot Manager...")
@@ -212,4 +269,3 @@ if __name__ == "__main__":
     else:
         print("⚠️ Tipo desconocido, usando Manager por defecto.")
         bot_app.run()
-
