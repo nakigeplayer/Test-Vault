@@ -114,6 +114,37 @@ def get_info(msg: Message):
     size = getattr(media, "file_size", 0) / (1024 * 1024) if media else 0.0
     return fname, fid, size
 
+@bot_app.on_message(filters.command("up"))
+async def handle_up_command(client: Client, message: Message):
+    if not message.reply_to_message or not message.reply_to_message.media:
+        await message.reply("❌ Este comando debe responder a un archivo.")
+        return
+
+    try:
+        _, inst, mins, uid = message.text.split()
+        inst = int(inst)
+        mins = int(mins)
+        user_id = uid
+    except ValueError:
+        await message.reply("⚠️ Uso incorrecto. Formato: /up <instancia> <minutos> <user_id>")
+        return
+
+    if inst != INSTANCE:
+        return  # Ignorar si no es nuestra instancia
+
+    fname, fid, size_mb = get_info(message.reply_to_message)
+    path = os.path.join(VAULT_FOLDER, user_id, fname)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    await client.download_media(message.reply_to_message, path)
+    active_files[fid] = (fname, user_id, size_mb)
+
+    usage = load_storage_map()
+    usage[str(INSTANCE)] += size_mb
+    save_storage_map(usage)
+
+    link = f"{BASE_URL}/vault/{user_id}/{fname}"
+    await client.send_message(int(user_id), f"✅ Tu archivo está en Instancia {INSTANCE}. Descárgalo aquí:\n{link}")
+
 @bot_app.on_message(filters.media)
 async def receive_media(client, message):
     if INSTANCE != 1:
@@ -130,36 +161,8 @@ async def receive_media(client, message):
     usage[str(target)] += size_mb
     save_storage_map(usage)
 
-    msg = f"Subiendo a la Instancia {target} durante {FILE_DURATION_MIN} minutos para el usuario {user_id}"
+    msg = f"/up {target} {FILE_DURATION_MIN} {user_id}"
     await message.reply(msg, quote=True)
-
-@bot_app.on_message(filters.text)
-async def handle_redirect(client: Client, message: Message):
-
-    match = re.search(r"Instancia (\d+) .*usuario (\d+)", message.text)
-    if not match or int(match.group(1)) != INSTANCE:
-        return
-
-    user_id = match.group(2)
-    original = message.reply_to_message
-
-    if not original or not (original.document or original.photo or original.video or original.audio):
-        await message.reply("❌ No se encontró el archivo original en la respuesta.")
-        return
-
-    fname, fid, size_mb = get_info(original)
-    path = os.path.join(VAULT_FOLDER, user_id, fname)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-
-    await client.download_media(original, path)
-    active_files[fid] = (fname, user_id, size_mb)
-
-    usage = load_storage_map()
-    usage[str(INSTANCE)] += size_mb
-    save_storage_map(usage)
-
-    link = f"{BASE_URL}/vault/{user_id}/{fname}"
-    await client.send_message(int(user_id), f"✅ Archivo guardado en la Instancia {INSTANCE}. Puedes descargarlo aquí:\n{link}")
 
 @bot_app.on_message(filters.command("clear"))
 async def clear(client, message):
