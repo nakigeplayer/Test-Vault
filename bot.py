@@ -199,13 +199,18 @@ def start_bot(bot_instance, label):
         print(f"❌ [{label}] Error: {e}")
 
 if __name__ == "__main__":
-    print("🌐 Iniciando Flask...")
-    threading.Thread(target=run_flask, daemon=True).start()
+    TYPE_SERVICE = os.getenv("TYPE_SERVICE", "Manager")
 
-    print("🤖 Lanzando Bots...")
-    threading.Thread(target=lambda: start_bot(bot_app, "Bot 1"), daemon=True).start()
-    threading.Thread(target=lambda: start_bot(bot_app_instance, "Bot 2"), daemon=True).start()
+    print(f"🛠️ Tipo de servicio: {TYPE_SERVICE}")
+    if TYPE_SERVICE.lower() == "manager":
+        print("🌐 Iniciando Flask y Bot principal...")
+        threading.Thread(target=run_flask, daemon=True).start()
+        bot_app.run()
+    elif TYPE_SERVICE.lower() == "uploader":
+        print("📦 Iniciando Bot Uploader...")
+        bot_app_instance.run()
+    else:
+        print("⚠️ Tipo de servicio desconocido. Usando modo Manager por defecto...")
+        threading.Thread(target=run_flask, daemon=True).start()
+        bot_app.run()
 
-    print("⏳ Manteniendo servicio activo...")
-    while True:
-        time.sleep(10)
