@@ -187,23 +187,25 @@ def run_flask():
 
 import asyncio
 import threading
+import time
 
-def run_bot(bot_instance, label):
+def start_bot(bot_instance, label):
+    print(f"🟢 [{label}] Iniciando...")
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         bot_instance.run()
     except Exception as e:
-        print(f"[{label}] ❌ Error ejecutando bot: {e}")
-
-import time
+        print(f"❌ [{label}] Error: {e}")
 
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
-    threading.Thread(target=lambda: run_bot(bot_app, "Bot 1")).start()
-    threading.Thread(target=lambda: run_bot(bot_app_instance, "Bot 2")).start()
+    print("🌐 Iniciando Flask...")
+    threading.Thread(target=run_flask, daemon=True).start()
 
-    # Mantener hilo principal vivo
+    print("🤖 Lanzando Bots...")
+    threading.Thread(target=lambda: start_bot(bot_app, "Bot 1"), daemon=True).start()
+    threading.Thread(target=lambda: start_bot(bot_app_instance, "Bot 2"), daemon=True).start()
+
+    print("⏳ Manteniendo servicio activo...")
     while True:
         time.sleep(10)
-
