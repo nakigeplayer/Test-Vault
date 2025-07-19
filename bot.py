@@ -257,6 +257,19 @@ def start_bot(bot_instance, label):
         bot_instance.run()
     except Exception as e:
         print(f"❌ [{label}] Error: {e}")
+from pyrogram.errors import FloodWait
+
+def wait_for_bot(client):
+    try:
+        client.run()
+    except FloodWait as e:
+        wait_time = e.value
+        print(f"⏳ Esperando {wait_time} segundos para iniciar el bot...")
+        for i in range(wait_time):
+            print(f"\r⌛ Esperando... {wait_time - i} segundos", end="")
+            time.sleep(1)
+        print("\r✅ Retomando ejecución...               ")
+        client.run()
 
 if __name__ == "__main__":
     TYPE_SERVICE = os.getenv("TYPE_SERVICE", "Manager").lower()
@@ -266,13 +279,13 @@ if __name__ == "__main__":
         print("🌐 Iniciando Flask (Uploader)...")
         threading.Thread(target=run_flask, daemon=True).start()
         start_expiration_checker()
-        bot_app_instance.run()
+        wait_for_bot(bot_app_instance)
 
     elif TYPE_SERVICE == "manager":
         print("🤖 Iniciando Bot Manager...")
-        bot_app.run()
+        wait_for_bot(bot_app)
 
     else:
         print("⚠️ Tipo desconocido, usando Manager por defecto.")
-        bot_app.run()
-        
+        wait_for_bot(bot_app)
+
