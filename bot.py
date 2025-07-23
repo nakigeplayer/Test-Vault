@@ -31,10 +31,15 @@ active_files = {}
 # --- Utilidades ---
 def load_storage_map():
     if os.path.exists(storage_path):
-        with open(storage_path, "r") as f:
-            return json.load(f)
+        try:
+            with open(storage_path, "r") as f:
+                data = json.load(f)
+                for i in range(1, TOTAL_INSTANCES + 1):
+                    data.setdefault(str(i), 0.0)
+                return data
+        except json.JSONDecodeError:
     return {str(i): 0.0 for i in range(1, TOTAL_INSTANCES + 1)}
-
+    
 def save_storage_map(data):
     with open(storage_path, "w") as f:
         json.dump(data, f)
