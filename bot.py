@@ -38,6 +38,7 @@ def load_storage_map():
                     data.setdefault(str(i), 0.0)
                 return data
         except json.JSONDecodeError:
+            return {str(i): 0.0 for i in range(1, TOTAL_INSTANCES + 1)}
     return {str(i): 0.0 for i in range(1, TOTAL_INSTANCES + 1)}
     
 def save_storage_map(data):
