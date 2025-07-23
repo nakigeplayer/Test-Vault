@@ -171,7 +171,6 @@ async def handle_up_command(client: Client, message: Message):
     if not message.reply_to_message or not message.reply_to_message.media:
         await message.reply("❌ Este comando debe responder a un archivo.")
         return
-
     sender = message.from_user
     admin_first = os.getenv("ADMIN_USER", "").lower()
     sender_first = (sender.first_name or "").lower()
@@ -179,7 +178,6 @@ async def handle_up_command(client: Client, message: Message):
     if not sender.is_self and sender_first != admin_first:
         await message.reply("Este comando es automanejado por el bot.")
         return
-
     try:
         _, inst, mins, uid = message.text.split()
         inst = int(inst)
@@ -188,7 +186,6 @@ async def handle_up_command(client: Client, message: Message):
     except ValueError:
         await message.reply("⚠️ Uso incorrecto. Formato: /up <instancia> <minutos> <user_id>")
         return
-
     if inst != INSTANCE:
         return
 
@@ -208,15 +205,18 @@ async def handle_up_command(client: Client, message: Message):
     save_storage_map(usage)
     link = f"{BASE_URL}/vault/{user_id}/{secure_filename(fname)}"
     await client.send_message(int(user_id), f"✅ Tu archivo está en Instancia {INSTANCE}. Descárgalo aquí:\n{link}")
+
 @bot_app.on_message(filters.command("clear"))
 async def clear_manager(client, message):
     usage = load_storage_map()
     report = []
-
     for i in range(1, TOTAL_INSTANCES + 1):
         freed = round(float(usage.get(str(i), 0.0)), 2)
         report.append(f"🗂 Instancia {i}: {freed} MB liberados")
-
+    if os.path.exists(storage_path):
+        os.remove(storage_path)
+    with open(storage_path, "w") as f:
+        json.dump({}, f)
     msg = "\n".join(report)
     await message.reply(f"🧹 Estado del almacenamiento por instancia:\n{msg}")
 
