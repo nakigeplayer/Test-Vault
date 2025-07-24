@@ -135,16 +135,26 @@ def delete_file(user, filename):
     filename = secure_filename(filename)
     path = os.path.join(VAULT_FOLDER, user, filename)
     if os.path.exists(path):
-        size_mb = os.path.getsize(path) / (1024 * 1024)
-        os.remove(path)
-        try: os.rmdir(os.path.dirname(path))
-        except: pass
-        asyncio.run(bot_app_instance.send_message(int(user), f"🧽 Tu archivo `{filename}` fue eliminado manualmente desde el panel web."))
-        time.sleep(1)
-        asyncio.run(bot_app_instance.send_message(int(user), f"/decrement {INSTANCE} {data['size_mb']}))
-        
-    return redirect(f"/vault/{user}/")
-
+        try:
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+            os.remove(path)
+            folder = os.path.dirname(path)
+            if not os.listdir(folder):
+                os.rmdir(folder)
+            asyncio.run(bot_app_instance.send_message(
+                int(user),
+                f"🧽 Tu archivo `{filename}` fue eliminado manualmente desde el panel web."
+            ))
+            time.sleep(1)
+            asyncio.run(bot_app_instance.send_message(
+                int(user),
+                f"/decrement {INSTANCE} {size_mb:.2f}"
+            ))
+        except Exception as e:
+            print(f"❌ Error al eliminar archivo desde web: {e}")
+            return "Error interno", 500
+    return "✅ Archivo eliminado correctamente", 200
+    
 @web_app.errorhandler(404)
 def not_found(e):
     return "🛑 Archivo no encontrado", 404
