@@ -305,7 +305,7 @@ def start_expiration_checker():
                     )
                     await asyncio.sleep(1)
                     await bot_app_instance.send_message(
-                        manager_chat_id,
+                        int(data["user_id"]),
                         f"/decrement {INSTANCE} {data['size_mb']}"
                     )
             for fid in expired:
