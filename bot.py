@@ -223,7 +223,17 @@ async def handle_decrement(client, message):
         save_storage_map(usage)
     except Exception as e:
         print(f"❌ Error al procesar /decrement: {e}")
-        
+
+@bot_app.on_message(filters.command("status"))
+async def show_vault(client, message):
+    usage = load_storage_map()
+    report = []
+    for i in range(1, TOTAL_INSTANCES + 1):
+        freed = round(float(usage.get(str(i), 0.0)), 2)
+        report.append(f"🗂 Instancia {i}: {freed} MB / {STORAGE_LIMIT_MB} MB")
+    msg = "\n".join(report)
+    await message.reply(f"📁Estado del almacenamiento por instancia:\n{msg}")
+    
 @bot_app.on_message(filters.command("clear"))
 async def clear_manager(client, message):
     usage = load_storage_map()
