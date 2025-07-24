@@ -145,13 +145,24 @@ def serve(user, filename):
 def delete_file(user, filename):
     filename = secure_filename(filename)
     path = os.path.join(VAULT_FOLDER, user, filename)
+
     if os.path.exists(path):
         try:
+            size_mb = os.path.getsize(path) / (1024 * 1024)  # <== Aquí lo defines
+            os.remove(path)
+
+            folder = os.path.dirname(path)
+            if not os.listdir(folder):
+                os.rmdir(folder)
+
             asyncio.run(notify_deletion(int(user), filename, size_mb))
+
         except Exception as e:
-            print(f"❌ Error al eliminar archivo desde web: {e}")
-            return "Error interno", 500
+            print(f"❌ Error al eliminar archivo desde web: {type(e).__name__} — {e}")
+            return f"Error interno: {type(e).__name__} — {e}", 500
+
     return "✅ Archivo eliminado correctamente", 200
+    
     
 @web_app.errorhandler(404)
 def not_found(e):
