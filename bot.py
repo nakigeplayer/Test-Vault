@@ -59,6 +59,17 @@ def get_info(msg: Message):
     size = getattr(media, "file_size", 0) / (1024 * 1024) if media else 0.0
     return fname, fid, size
 
+async def notify_deletion(user_id: int, filename: str, size_mb: float):
+    await bot_app_instance.send_message(
+        user_id,
+        f"🧽 Tu archivo `{filename}` fue eliminado manualmente desde el panel web."
+    )
+    await asyncio.sleep(1)
+    await bot_app_instance.send_message(
+        user_id,
+        f"/decrement {INSTANCE} {size_mb:.2f}"
+    )
+    
 # --- Web ---
 web_app = Flask(__name__)
 web_app.secret_key = os.getenv("SECRET_KEY", "clave_segura")
@@ -136,20 +147,7 @@ def delete_file(user, filename):
     path = os.path.join(VAULT_FOLDER, user, filename)
     if os.path.exists(path):
         try:
-            size_mb = os.path.getsize(path) / (1024 * 1024)
-            os.remove(path)
-            folder = os.path.dirname(path)
-            if not os.listdir(folder):
-                os.rmdir(folder)
-            asyncio.run(bot_app_instance.send_message(
-                int(user),
-                f"🧽 Tu archivo `{filename}` fue eliminado manualmente desde el panel web."
-            ))
-            time.sleep(1)
-            asyncio.run(bot_app_instance.send_message(
-                int(user),
-                f"/decrement {INSTANCE} {size_mb:.2f}"
-            ))
+            asyncio.run(notify_deletion(int(user), filename, size_mb))
         except Exception as e:
             print(f"❌ Error al eliminar archivo desde web: {e}")
             return "Error interno", 500
