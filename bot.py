@@ -315,7 +315,7 @@ def start_expiration_checker():
                     await asyncio.sleep(1)
                     await bot_app_instance.send_message(
                         int(data["user_id"]),
-                        f"/decrement {INSTANCE} {data['size_mb']}"
+                        f"/decrement {INSTANCE} {data['size_mb']:.2f}"
                     )
             for fid in expired:
                 active_files.pop(fid, None)
