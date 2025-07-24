@@ -186,7 +186,7 @@ async def receive_media(client, message):
         return
     target = decide_instance(size_mb)
     usage = load_storage_map()
-    usage[str(target)] += size_mb
+    usage[str(target)] = usage.get(str(target), 0.0) + size_mb
     save_storage_map(usage)
     msg = f"/up {target} {FILE_DURATION_MIN} {user_id}"
     await message.reply(msg, quote=True)
