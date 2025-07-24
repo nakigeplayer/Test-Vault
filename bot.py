@@ -139,10 +139,10 @@ def delete_file(user, filename):
         os.remove(path)
         try: os.rmdir(os.path.dirname(path))
         except: pass
-        usage = load_storage_map()
-        usage[str(INSTANCE)] = max(0.0, usage.get(str(INSTANCE), 0.0) - size_mb)
-        save_storage_map(usage)
         asyncio.run(bot_app_instance.send_message(int(user), f"🧽 Tu archivo `{filename}` fue eliminado manualmente desde el panel web."))
+        time.sleep(1)
+        asyncio.run(bot_app_instance.send_message(int(user), f"/decrement {INSTANCE} {data['size_mb']}))
+        
     return redirect(f"/vault/{user}/")
 
 @web_app.errorhandler(404)
@@ -212,6 +212,18 @@ async def handle_up_command(client: Client, message: Message):
     link = f"{BASE_URL}/vault/{user_id}/{secure_filename(fname)}"
     await client.send_message(int(user_id), f"✅ Tu archivo está en Instancia {INSTANCE}. Descárgalo aquí:\n{link}")
 
+@bot_app.on_message(filters.command("decrement"))
+async def handle_decrement(client, message):
+    try:
+        _, instance_str, mb_str = message.text.strip().split()
+        instance = str(instance_str)
+        mb = float(mb_str)
+        usage = load_storage_map()
+        usage[instance] = max(0.0, usage.get(instance, 0.0) - mb)
+        save_storage_map(usage)
+    except Exception as e:
+        print(f"❌ Error al procesar /decrement: {e}")
+        
 @bot_app.on_message(filters.command("clear"))
 async def clear_manager(client, message):
     usage = load_storage_map()
@@ -270,6 +282,11 @@ def start_expiration_checker():
                     await bot_app_instance.send_message(
                         int(data["user_id"]),
                         f"🗑️ Tu archivo `{data['fname']}` fue eliminado tras {duration} minutos."
+                    )
+                    await asyncio.sleep(1)
+                    await bot_app_instance.send_message(
+                        manager_chat_id,
+                        f"/decrement {INSTANCE} {data['size_mb']}"
                     )
             for fid in expired:
                 active_files.pop(fid, None)
