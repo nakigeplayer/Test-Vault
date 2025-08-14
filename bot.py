@@ -103,105 +103,94 @@ def login():
     </form>
     """)
 
-from pyrogram import Client
-from werkzeug.utils import secure_filename
-
 @web_app.route("/vault/")
 @login_required
 def index():
-    try:
-        users = sorted(os.listdir(VAULT_FOLDER), key=str.lower)
-        if not users:
-            upload_form = """
-            <h4>Crear carpeta y subir archivo</h4>
-            <form method='POST' action='/vault/new' enctype='multipart/form-data'>
-                <input type='text' name='user' placeholder='ID de usuario' required>
-                <input type='file' name='file' required>
-                <button type='submit'>📤 Crear y subir</button>
-            </form>
-            """
-            return render_template_string(f"<h2>Instancia {INSTANCE}</h2><p>No hay carpetas de usuario.</p>{upload_form}")
-        links = [f"<li><a href='/vault/{uid}/'>{uid}</a></li>" for uid in users]
-        return render_template_string(f"<h2>Instancia {INSTANCE}</h2><ul>" + "".join(links) + "</ul>")
-    except FileNotFoundError:
-        return "No hay archivos almacenados."
+    os.makedirs(VAULT_FOLDER, exist_ok=True)  # Asegura que la carpeta exista
+
+    users = sorted(os.listdir(VAULT_FOLDER), key=str.lower)
+    if not users:
+        upload_form = """
+        <h4>Crear carpeta y subir archivo</h4>
+        <form method='POST' action='/vault/new' enctype='multipart/form-data'>
+            <input type='text' name='user' placeholder='ID de usuario' required>
+            <input type='file' name='file' required>
+            <button type='submit'>📤 Crear y subir</button>
+        </form>
+        """
+        return render_template_string(f"<h2>Instancia {INSTANCE}</h2><p>No hay carpetas de usuario.</p>{upload_form}")
+
+    links = [f"<li><a href='/vault/{uid}/'>{uid}</a></li>" for uid in users]
+    return render_template_string(f"<h2>Instancia {INSTANCE}</h2><ul>" + "".join(links) + "</ul>")
+
+from flask import request, redirect, url_for, abort
+import werkzeug
+import re
 
 @web_app.route("/vault/new", methods=["POST"])
 @login_required
-def create_and_upload():
-    user = request.form.get("user")
+def vault_new():
+    user_id = request.form.get("user", "").strip()
     file = request.files.get("file")
-    if not user or not file or not file.filename:
-        return "Datos inválidos.", 400
 
-    user_dir = os.path.join(UPLOAD_FOLDER, user)
-    os.makedirs(user_dir, exist_ok=True)
+    # Validación básica del ID de usuario
+    if not re.match(r"^[\w\-]+$", user_id):
+        return "ID de usuario inválido. Usa solo letras, números, guiones o guiones bajos.", 400
 
-    filename = secure_filename(file.filename)
-    file.save(os.path.join(user_dir, filename))
-    return redirect(f"/vault/{user}/")
+    if not file or file.filename == "":
+        return "Archivo no válido.", 400
+
+    user_folder = os.path.join(VAULT_FOLDER, user_id)
+    os.makedirs(user_folder, exist_ok=True)
+
+    # Sanitiza el nombre del archivo
+    filename = werkzeug.utils.secure_filename(file.filename)
+    file_path = os.path.join(user_folder, filename)
+
+    try:
+        file.save(file_path)
+        return redirect(url_for("index"))
+    except Exception as e:
+        return f"Error al guardar el archivo: {e}", 500
+        
 
 @web_app.route("/vault/<user>/")
 @login_required
 def user_files(user):
-    user_dir = os.path.join(UPLOAD_FOLDER, user)
-    os.makedirs(user_dir, exist_ok=True)
+    path = os.path.join(VAULT_FOLDER, user)
+    if not os.path.exists(path):
+        return "Usuario no encontrado.", 404
 
-    files = sorted(os.listdir(user_dir), key=str.lower)
-
-    file_list_html = "<ul>"
-    for filename in files:
-        file_url = f"/vault/{user}/download/{filename}"
-        file_list_html += f"<li><a href='{file_url}'>{filename}</a></li>"
-    file_list_html += "</ul>"
-
+    # Formulario para subir archivos
     upload_form = f"""
     <h4>Subir nuevo archivo</h4>
-    <form method='POST' action='/vault/{user}/upload' enctype='multipart/form-data' style='margin-bottom:10px;'>
+    <form method='POST' action='/vault/{user}/upload' enctype='multipart/form-data'>
         <input type='file' name='file' required>
         <button type='submit'>📤 Subir</button>
     </form>
-
-    <form method='POST' action='/vault/{user}/send' enctype='multipart/form-data'>
-        <input type='file' name='file' required>
-        <button type='submit'>📨 Enviar al chat</button>
-    </form>
     """
 
-    return f"""
-    <h2>Archivos de usuario: {user}</h2>
-    {upload_form}
-    <h4>Archivos guardados</h4>
-    {file_list_html}
-    """
+    # Lista de archivos
+    files = os.listdir(path)
+    items = []
+    for f in files:
+        fpath = os.path.join(path, f)
+        size = os.path.getsize(fpath) / (1024 * 1024)
+        items.append(f"""
+        <li>
+            {f} ({round(size,2)} MB)
+            <a href='/vault/{user}/{f}'>Descargar</a>
+            <form method='POST' action='/vault/{user}/{f}/delete' style='display:inline;'>
+                <button type='submit'>🗑️ Borrar</button>
+            </form>
+        </li>
+        """)
 
-from pyrogram import Client
-from werkzeug.utils import secure_filename
-
-
-@web_app.route("/vault/<user>/send", methods=["POST"])
-@login_required
-def send_to_telegram(user):
-    try:
-        chat_id = int(user)
-    except ValueError:
-        return "ID de usuario inválido.", 400
-
-    file = request.files.get("file")
-    if not file or not file.filename:
-        return "Archivo inválido.", 400
-
-    filename = secure_filename(file.filename)
-    temp_path = os.path.join("/tmp", filename)
-    file.save(temp_path)
-
-    try:
-        bot_app_instance.send_document(chat_id=chat_id, document=temp_path)
-        os.remove(temp_path)
-        return redirect(f"/vault/{user}/")
-    except Exception as e:
-        os.remove(temp_path)
-        return f"Error al enviar el archivo: {str(e)}", 500
+    return render_template_string(
+        f"<h3>Archivos de {user}</h3>"
+        + upload_form +
+        "<ul>" + "".join(items) + "</ul>"
+    )
 
 @web_app.route("/vault/<user>/upload", methods=["POST"])
 @login_required
@@ -293,6 +282,161 @@ async def handle_up_command(client: Client, message: Message):
     except ValueError:
         await message.reply("⚠️ Uso incorrecto. Formato: /up <instancia> <minutos> <user_id>")
         return
+    if inst != INSTANCE:
+        return
+
+    fname, fid, size_mb = get_info(message.reply_to_message)
+    path = os.path.join(VAULT_FOLDER, user_id, secure_filename(fname))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    await client.download_media(message.reply_to_message, path)
+    active_files[fid] = {
+        "fname": fname,
+        "user_id": user_id,
+        "size_mb": size_mb,
+        "timestamp": datetime.now().timestamp(),
+        "duration": mins
+    }
+    usage = load_storage_map()
+    usage[str(INSTANCE)] += size_mb
+    save_storage_map(usage)
+    link = f"{BASE_URL}/vault/{user_id}/{secure_filename(fname)}"
+    await client.send_message(int(user_id), f"✅ Tu archivo está en Instancia {INSTANCE}. Descárgalo aquí:\n{link}")
+
+@bot_app.on_message(filters.command("decrement"))
+async def handle_decrement(client, message):
+    try:
+        _, instance_str, mb_str = message.text.strip().split()
+        instance = str(instance_str)
+        mb = float(mb_str)
+        usage = load_storage_map()
+        usage[instance] = max(0.0, usage.get(instance, 0.0) - mb)
+        save_storage_map(usage)
+    except Exception as e:
+        print(f"❌ Error al procesar /decrement: {e}")
+
+@bot_app.on_message(filters.command("status"))
+async def show_vault(client, message):
+    usage = load_storage_map()
+    report = []
+    for i in range(1, TOTAL_INSTANCES + 1):
+        freed = round(float(usage.get(str(i), 0.0)), 2)
+        report.append(f"🗂 Instancia {i}: {freed} MB / {STORAGE_LIMIT_MB} MB")
+    msg = "\n".join(report)
+    await message.reply(f"📁Estado del almacenamiento por instancia:\n{msg}")
+    
+@bot_app.on_message(filters.command("clear"))
+async def clear_manager(client, message):
+    usage = load_storage_map()
+    report = []
+    for i in range(1, TOTAL_INSTANCES + 1):
+        freed = round(float(usage.get(str(i), 0.0)), 2)
+        report.append(f"🗂 Instancia {i}: {freed} MB liberados")
+    if os.path.exists(storage_path):
+        os.remove(storage_path)
+    with open(storage_path, "w") as f:
+        json.dump({}, f)
+    msg = "\n".join(report)
+    await message.reply(f"🧹 Estado del almacenamiento por instancia:\n{msg}")
+
+@bot_app_instance.on_message(filters.command("clear"))
+async def clear_uploader(client, message):
+    user_id = str(message.from_user.id)
+    folder = os.path.join(VAULT_FOLDER, user_id)
+    if not os.path.exists(folder):
+        return
+    freed = 0.0
+    for f in os.listdir(folder):
+        fpath = os.path.join(folder, f)
+        try:
+            freed += os.path.getsize(fpath) / (1024 * 1024)
+            os.remove(fpath)
+        except:
+            continue
+    try:
+        os.rmdir(folder)
+    except:
+        pass
+    usage = load_storage_map()
+    usage[str(INSTANCE)] = max(0.0, usage.get(str(INSTANCE), 0.0) - freed)
+    save_storage_map(usage)
+    
+def start_expiration_checker():
+    async def check_files():
+        while True:
+            now = datetime.now().timestamp()
+            expired = []
+            for fid, data in list(active_files.items()):
+                age = (now - data["timestamp"]) / 60  # minutos
+                duration = int(data.get("duration", FILE_DURATION_MIN))
+                if age >= duration:
+                    path = os.path.join(VAULT_FOLDER, data["user_id"], secure_filename(data["fname"]))
+                    if os.path.exists(path):
+                        os.remove(path)
+                        print(f"⏳ Archivo expirado: {data['fname']}")
+                        try: os.rmdir(os.path.dirname(path))
+                        except: pass
+                    usage = load_storage_map()
+                    usage[str(INSTANCE)] = max(0.0, usage.get(str(INSTANCE), 0.0) - data["size_mb"])
+                    save_storage_map(usage)
+                    expired.append(fid)
+                    await bot_app_instance.send_message(
+                        int(data["user_id"]),
+                        f"🗑️ Tu archivo `{data['fname']}` fue eliminado tras {duration} minutos."
+                    )
+                    await asyncio.sleep(1)
+                    await bot_app_instance.send_message(
+                        int(data["user_id"]),
+                        f"/decrement {INSTANCE} {data['size_mb']:.2f}"
+                    )
+            for fid in expired:
+                active_files.pop(fid, None)
+            await asyncio.sleep(60)  # revisar cada minuto
+
+    threading.Thread(target=lambda: asyncio.run(check_files()), daemon=True).start()
+
+def run_flask():
+    web_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
+def start_bot(bot_instance, label):
+    print(f"🟢 [{label}] Iniciando...")
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        bot_instance.run()
+    except Exception as e:
+        print(f"❌ [{label}] Error: {e}")
+from pyrogram.errors import FloodWait
+
+def wait_for_bot(client):
+    try:
+        client.run()
+    except FloodWait as e:
+        wait_time = e.value
+        print(f"⏳ Esperando {wait_time} segundos para iniciar el bot...")
+        for i in range(wait_time):
+            print(f"\r⌛ Esperando... {wait_time - i} segundos", end="")
+            time.sleep(1)
+        print("\r✅ Retomando ejecución...               ")
+        client.run()
+
+if __name__ == "__main__":
+    TYPE_SERVICE = os.getenv("TYPE_SERVICE", "Manager").lower()
+    print(f"🔧 Tipo de servicio: {TYPE_SERVICE}")
+
+    if TYPE_SERVICE == "uploader":
+        print("🌐 Iniciando Flask (Uploader)...")
+        threading.Thread(target=run_flask, daemon=True).start()
+        start_expiration_checker()
+        wait_for_bot(bot_app_instance)
+
+    elif TYPE_SERVICE == "manager":
+        print("🤖 Iniciando Bot Manager...")
+        wait_for_bot(bot_app)
+
+    else:
+        print("⚠️ Tipo desconocido, usando Manager por defecto.")
+        wait_for_bot(bot_app)
+      return
     if inst != INSTANCE:
         return
 
