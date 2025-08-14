@@ -119,6 +119,17 @@ def user_files(user):
     path = os.path.join(VAULT_FOLDER, user)
     if not os.path.exists(path):
         return "Usuario no encontrado.", 404
+
+    # Formulario para subir archivos
+    upload_form = f"""
+    <h4>Subir nuevo archivo</h4>
+    <form method='POST' action='/vault/{user}/upload' enctype='multipart/form-data'>
+        <input type='file' name='file' required>
+        <button type='submit'>📤 Subir</button>
+    </form>
+    """
+
+    # Lista de archivos
     files = os.listdir(path)
     items = []
     for f in files:
@@ -133,8 +144,27 @@ def user_files(user):
             </form>
         </li>
         """)
-    return render_template_string(f"<h3>Archivos de {user}</h3><ul>" + "".join(items) + "</ul>")
 
+    return render_template_string(
+        f"<h3>Archivos de {user}</h3>"
+        + upload_form +
+        "<ul>" + "".join(items) + "</ul>"
+    )
+
+@web_app.route("/vault/<user>/upload", methods=["POST"])
+@login_required
+def upload_to_vault(user):
+    path = os.path.join(VAULT_FOLDER, user)
+    if not os.path.exists(path):
+        return "Usuario no encontrado.", 404
+
+    file = request.files.get("file")
+    if file and file.filename:
+        save_path = os.path.join(path, file.filename)
+        file.save(save_path)
+        return redirect(f"/vault/{user}/")
+    return "Archivo inválido.", 400
+    
 @web_app.route("/vault/<user>/<filename>")
 def serve(user, filename):
     filename = secure_filename(filename)
