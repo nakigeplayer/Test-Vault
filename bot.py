@@ -10,6 +10,8 @@ from datetime import datetime
 import asyncio
 import time
 import uuid
+import re
+
 
 # --- Configuración ---
 load_dotenv()
