@@ -103,15 +103,44 @@ def login():
     </form>
     """)
 
+from pyrogram import Client
+from werkzeug.utils import secure_filename
+
 @web_app.route("/vault/")
 @login_required
 def index():
     try:
-        users = os.listdir(VAULT_FOLDER)
+        users = sorted(os.listdir(VAULT_FOLDER), key=str.lower)
+        if not users:
+            upload_form = """
+            <h4>Crear carpeta y subir archivo</h4>
+            <form method='POST' action='/vault/new' enctype='multipart/form-data'>
+                <input type='text' name='user' placeholder='ID de usuario' required>
+                <input type='file' name='file' required>
+                <button type='submit'>📤 Crear y subir</button>
+            </form>
+            """
+            return render_template_string(f"<h2>Instancia {INSTANCE}</h2><p>No hay carpetas de usuario.</p>{upload_form}")
         links = [f"<li><a href='/vault/{uid}/'>{uid}</a></li>" for uid in users]
         return render_template_string(f"<h2>Instancia {INSTANCE}</h2><ul>" + "".join(links) + "</ul>")
     except FileNotFoundError:
         return "No hay archivos almacenados."
+
+@web_app.route("/vault/new", methods=["POST"])
+@login_required
+def create_and_upload():
+    user = request.form.get("user")
+    file = request.files.get("file")
+    if not user or not file or not file.filename:
+        return "Datos inválidos.", 400
+
+    user_dir = os.path.join(UPLOAD_FOLDER, user)
+    os.makedirs(user_dir, exist_ok=True)
+
+    filename = secure_filename(file.filename)
+    file.save(os.path.join(user_dir, filename))
+    return redirect(f"/vault/{user}/")
+
 @web_app.route("/vault/<user>/")
 @login_required
 def user_files(user):
@@ -145,6 +174,30 @@ def user_files(user):
     <h4>Archivos guardados</h4>
     {file_list_html}
     """
+
+@web_app.route("/vault/<user>/send", methods=["POST"])
+@login_required
+def send_to_telegram(user):
+    try:
+        chat_id = int(user)
+    except ValueError:
+        return "ID de usuario inválido.", 400
+
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return "Archivo inválido.", 400
+
+    filename = secure_filename(file.filename)
+    temp_path = os.path.join("/tmp", filename)
+    file.save(temp_path)
+
+    try:
+        bot_app_instance.send_document(chat_id=chat_id, document=temp_path)
+        os.remove(temp_path)
+        return redirect(f"/vault/{user}/")
+    except Exception as e:
+        os.remove(temp_path)
+        return f"Error al enviar el archivo: {str(e)}", 500
 
 from pyrogram import Client
 from werkzeug.utils import secure_filename
