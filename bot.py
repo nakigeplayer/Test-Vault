@@ -112,44 +112,75 @@ def index():
         return render_template_string(f"<h2>Instancia {INSTANCE}</h2><ul>" + "".join(links) + "</ul>")
     except FileNotFoundError:
         return "No hay archivos almacenados."
-
 @web_app.route("/vault/<user>/")
 @login_required
 def user_files(user):
-    path = os.path.join(VAULT_FOLDER, user)
-    if not os.path.exists(path):
-        return "Usuario no encontrado.", 404
+    user_dir = os.path.join(UPLOAD_FOLDER, user)
+    os.makedirs(user_dir, exist_ok=True)
 
-    # Formulario para subir archivos
+    files = sorted(os.listdir(user_dir), key=str.lower)
+
+    file_list_html = "<ul>"
+    for filename in files:
+        file_url = f"/vault/{user}/download/{filename}"
+        file_list_html += f"<li><a href='{file_url}'>{filename}</a></li>"
+    file_list_html += "</ul>"
+
     upload_form = f"""
     <h4>Subir nuevo archivo</h4>
-    <form method='POST' action='/vault/{user}/upload' enctype='multipart/form-data'>
+    <form method='POST' action='/vault/{user}/upload' enctype='multipart/form-data' style='margin-bottom:10px;'>
         <input type='file' name='file' required>
         <button type='submit'>📤 Subir</button>
     </form>
+
+    <form method='POST' action='/vault/{user}/send' enctype='multipart/form-data'>
+        <input type='file' name='file' required>
+        <button type='submit'>📨 Enviar al chat</button>
+    </form>
     """
 
-    # Lista de archivos
-    files = os.listdir(path)
-    items = []
-    for f in files:
-        fpath = os.path.join(path, f)
-        size = os.path.getsize(fpath) / (1024 * 1024)
-        items.append(f"""
-        <li>
-            {f} ({round(size,2)} MB)
-            <a href='/vault/{user}/{f}'>Descargar</a>
-            <form method='POST' action='/vault/{user}/{f}/delete' style='display:inline;'>
-                <button type='submit'>🗑️ Borrar</button>
-            </form>
-        </li>
-        """)
+    return f"""
+    <h2>Archivos de usuario: {user}</h2>
+    {upload_form}
+    <h4>Archivos guardados</h4>
+    {file_list_html}
+    """
 
-    return render_template_string(
-        f"<h3>Archivos de {user}</h3>"
-        + upload_form +
-        "<ul>" + "".join(items) + "</ul>"
-    )
+from pyrogram import Client
+from werkzeug.utils import secure_filename
+
+@web_app.route("/vault/<user>/send", methods=["POST"])
+@login_required
+def send_to_telegram(user):
+    try:
+        chat_id = int(user)
+    except ValueError:
+        return "ID de usuario inválido.", 400
+
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return "Archivo inválido.", 400
+
+    # Guardar temporalmente en memoria o disco
+    filename = secure_filename(file.filename)
+    temp_path = os.path.join("/tmp", filename)
+    file.save(temp_path)
+
+    try:
+        bot_app_instance = Client(
+            "bot_session",
+            api_id=API_ID,
+            api_hash=API_HASH,
+            bot_token=BOT_TOKEN
+        )
+        bot_app_instance.start()
+        bot_app_instance.send_document(chat_id=chat_id, document=temp_path)
+        bot_app_instance.stop()
+        os.remove(temp_path)
+        return redirect(f"/vault/{user}/")
+    except Exception as e:
+        return f"Error al enviar el archivo: {str(e)}", 500
+        
 
 @web_app.route("/vault/<user>/upload", methods=["POST"])
 @login_required
