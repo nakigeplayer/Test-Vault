@@ -102,16 +102,41 @@ def login():
       <input type="submit" value="Ingresar">
     </form>
     """)
-
 @web_app.route("/vault/")
 @login_required
 def index():
-    try:
-        users = os.listdir(VAULT_FOLDER)
-        links = [f"<li><a href='/vault/{uid}/'>{uid}</a></li>" for uid in users]
-        return render_template_string(f"<h2>Instancia {INSTANCE}</h2><ul>" + "".join(links) + "</ul>")
-    except FileNotFoundError:
-        return "No hay archivos almacenados."
+    os.makedirs(VAULT_FOLDER, exist_ok=True)  # Asegura que la carpeta exista
+
+    users = sorted(os.listdir(VAULT_FOLDER), key=str.lower)
+    links = [f"<li><a href='/vault/{uid}/'>{uid}</a></li>" for uid in users]
+
+    create_form = """
+    <h4>Crear carpeta de usuario</h4>
+    <form method='POST' action='/vault/new'>
+        <input type='text' name='user' placeholder='ID de usuario' required>
+        <button type='submit'>📁 Crear carpeta</button>
+    </form>
+    """
+
+    return render_template_string(f"""
+        <h2>Instancia {INSTANCE}</h2>
+        <ul>{''.join(links)}</ul>
+        {create_form}
+    """)
+
+@web_app.route("/vault/new", methods=["POST"])
+@login_required
+def vault_new():
+    user_id = request.form.get("user", "").strip()
+
+    if not re.match(r"^[\w\-]+$", user_id):
+        return "ID de usuario inválido.", 400
+
+    user_folder = os.path.join(VAULT_FOLDER, user_id)
+    os.makedirs(user_folder, exist_ok=True)
+
+    return redirect(url_for("index"))
+    
 
 @web_app.route("/vault/<user>/")
 @login_required
