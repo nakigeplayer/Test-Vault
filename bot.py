@@ -161,25 +161,18 @@ def send_to_telegram(user):
     if not file or not file.filename:
         return "Archivo inválido.", 400
 
-    # Guardar temporalmente en memoria o disco
     filename = secure_filename(file.filename)
     temp_path = os.path.join("/tmp", filename)
     file.save(temp_path)
 
     try:
-        bot_app_instance = Client(
-            "bot_session",
-            api_id=API_ID,
-            api_hash=API_HASH,
-            bot_token=BOT_TOKEN
-        )
-        bot_app_instance.start()
         bot_app_instance.send_document(chat_id=chat_id, document=temp_path)
-        bot_app_instance.stop()
         os.remove(temp_path)
         return redirect(f"/vault/{user}/")
     except Exception as e:
+        os.remove(temp_path)
         return f"Error al enviar el archivo: {str(e)}", 500
+
         
 
 @web_app.route("/vault/<user>/upload", methods=["POST"])
